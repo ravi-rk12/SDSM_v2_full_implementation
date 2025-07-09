@@ -8,7 +8,8 @@ import * as firestoreService from "@/lib/firebase/firestoreService";
 import { Transaction, Kisan, Vyapari, Product, BillStatement, DailyMandiSummary } from "@/types";
 import Modal from '@/components/Modal';
 import BillModal from '@/components/BillModal';
-import DailyMandiSummaryModal from '@/components/DailyMandiSummaryModal'; // New modal for mandi summary
+import DailyMandiSummaryModal from '@/components/DailyMandiSummaryModal';
+import BatchEditTransactionModal from '@/components/BatchEditTransactionModal'; // NEW: Import BatchEditTransactionModal
 
 // --- CustomTooltip Component (keep as is) ---
 const CustomTooltip: React.FC<{ content: React.ReactNode; children: React.ReactNode }> = ({ content, children }) => {
@@ -74,6 +75,11 @@ export default function TransactionsPage() {
   const [selectedKisan, setSelectedKisan] = useState<Kisan | null>(null);
   const [selectedVyapari, setSelectedVyapari] = useState<Vyapari | null>(null);
 
+  // NEW: State for Batch Edit Transactions
+  const [selectedTransactionIds, setSelectedTransactionIds] = useState<string[]>([]);
+  const [showBatchEditTransactionModal, setShowBatchEditTransactionModal] = useState(false);
+
+
   const fetchAllData = useCallback(async () => {
     try {
       setIsLoading(true);
@@ -118,6 +124,7 @@ export default function TransactionsPage() {
 
       const fetchedTransactions = await firestoreService.getTransactions(firestoreFilters);
       setTransactions(fetchedTransactions);
+      setSelectedTransactionIds([]); // Clear selections on data refresh
 
     } catch (err: any) {
       console.error("Error fetching data:", err);
@@ -307,6 +314,37 @@ export default function TransactionsPage() {
     );
   };
 
+  // NEW: Handle checkbox selection for transactions
+  const handleCheckboxChange = (id: string, isChecked: boolean) => {
+    if (isChecked) {
+      setSelectedTransactionIds(prev => [...prev, id]);
+    } else {
+      setSelectedTransactionIds(prev => prev.filter(txnId => txnId !== id));
+    }
+  };
+
+  // NEW: Handle select all checkbox for transactions
+  const handleSelectAllChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.checked) {
+      setSelectedTransactionIds(transactions.map(txn => txn.id));
+    } else {
+      setSelectedTransactionIds([]);
+    }
+  };
+
+  // NEW: Open Batch Edit Transaction Modal
+  const handleOpenBatchEditModal = () => {
+    if (selectedTransactionIds.length > 0) {
+      setShowBatchEditTransactionModal(true);
+    }
+  };
+
+  // NEW: Callback for when batch edit is complete (to refresh list)
+  const handleBatchEditComplete = () => {
+    setShowBatchEditTransactionModal(false);
+    fetchAllData(); // Re-fetch all transactions to reflect changes
+  };
+
 
   if (isLoading) {
     return (
@@ -335,11 +373,24 @@ export default function TransactionsPage() {
     <div className="container mx-auto p-4">
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold text-gray-800">Transactions</h1>
-        <Link href="/dashboard/transactions/add" passHref>
-          <button className="px-4 py-2 bg-indigo-600 text-white font-semibold rounded-md shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2">
-            Record New Transaction
+        <div className="flex space-x-4">
+          <button
+            onClick={handleOpenBatchEditModal}
+            disabled={selectedTransactionIds.length === 0}
+            className={`px-4 py-2 font-semibold rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 ${
+              selectedTransactionIds.length === 0
+                ? 'bg-gray-400 cursor-not-allowed'
+                : 'bg-purple-600 text-white hover:bg-purple-700 focus:ring-purple-500'
+            }`}
+          >
+            Batch Edit ({selectedTransactionIds.length})
           </button>
-        </Link>
+          <Link href="/dashboard/transactions/add" passHref>
+            <button className="px-4 py-2 bg-indigo-600 text-white font-semibold rounded-md shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2">
+              Record New Transaction
+            </button>
+          </Link>
+        </div>
       </div>
 
       {/* Filter Section for Transactions List (keep as is) */}
@@ -580,6 +631,14 @@ export default function TransactionsPage() {
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
+                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <input
+                    type="checkbox"
+                    onChange={handleSelectAllChange}
+                    checked={selectedTransactionIds.length === transactions.length && transactions.length > 0}
+                    className="h-4 w-4 text-indigo-600 border-gray-300 rounded"
+                  />
+                </th>
                 <th
                   scope="col"
                   className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
@@ -626,6 +685,14 @@ export default function TransactionsPage() {
 
                 return (
                   <tr key={transaction.id}>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                      <input
+                        type="checkbox"
+                        checked={selectedTransactionIds.includes(transaction.id)}
+                        onChange={(e) => handleCheckboxChange(transaction.id, e.target.checked)}
+                        className="h-4 w-4 text-indigo-600 border-gray-300 rounded"
+                      />
+                    </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {(transaction.transactionDate as Date).toLocaleDateString()}
                     </td>
@@ -715,6 +782,16 @@ export default function TransactionsPage() {
           isOpen={showDailyMandiSummaryModal}
           onClose={() => setShowDailyMandiSummaryModal(false)}
           summaryData={dailyMandiSummaryData}
+        />
+      )}
+
+      {/* NEW: Batch Edit Transaction Modal */}
+      {showBatchEditTransactionModal && (
+        <BatchEditTransactionModal
+          isOpen={showBatchEditTransactionModal}
+          onClose={() => setShowBatchEditTransactionModal(false)}
+          transactionIds={selectedTransactionIds}
+          onBatchEditComplete={handleBatchEditComplete}
         />
       )}
     </div>

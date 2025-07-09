@@ -139,6 +139,31 @@ export async function deleteKisan(id: string): Promise<void> {
   }
 }
 
+/**
+ * Batch updates multiple Kisan documents.
+ * @param kisanIds An array of Kisan document IDs to update.
+ * @param updates A partial Kisan object containing the fields to update.
+ */
+export async function batchUpdateKisans(kisanIds: string[], updates: Partial<Omit<Kisan, 'id' | 'createdAt'>>): Promise<void> {
+  if (kisanIds.length === 0) {
+    console.warn("No Kisan IDs provided for batch update.");
+    return;
+  }
+  const batch = writeBatch(db);
+  kisanIds.forEach(id => {
+    const kisanRef = doc(db, 'kisans', id);
+    batch.update(kisanRef, { ...updates, updatedAt: serverTimestamp() });
+  });
+  try {
+    await batch.commit();
+    console.log(`Batch updated ${kisanIds.length} Kisans successfully.`);
+  } catch (error) {
+    console.error("Error batch updating Kisans:", error);
+    throw new Error("Failed to batch update Kisans.");
+  }
+}
+
+
 // =====================================================================
 // Vyapari Operations
 // =====================================================================
@@ -208,6 +233,30 @@ export async function deleteVyapari(id: string): Promise<void> {
   } catch (error) {
     console.error(`Error deleting Vyapari with ID ${id}:`, error);
     throw new Error(`Failed to delete Vyapari with ID ${id}.`);
+  }
+}
+
+/**
+ * Batch updates multiple Vyapari documents.
+ * @param vyapariIds An array of Vyapari document IDs to update.
+ * @param updates A partial Vyapari object containing the fields to update.
+ */
+export async function batchUpdateVyaparis(vyapariIds: string[], updates: Partial<Omit<Vyapari, 'id' | 'createdAt'>>): Promise<void> {
+  if (vyapariIds.length === 0) {
+    console.warn("No Vyapari IDs provided for batch update.");
+    return;
+  }
+  const batch = writeBatch(db);
+  vyapariIds.forEach(id => {
+    const vyapariRef = doc(db, 'vyaparis', id);
+    batch.update(vyapariRef, { ...updates, updatedAt: serverTimestamp() });
+  });
+  try {
+    await batch.commit();
+    console.log(`Batch updated ${vyapariIds.length} Vyaparis successfully.`);
+  } catch (error) {
+    console.error("Error batch updating Vyaparis:", error);
+    throw new Error("Failed to batch update Vyaparis.");
   }
 }
 
@@ -282,6 +331,30 @@ export async function deleteProduct(id: string): Promise<void> {
   }
 }
 
+/**
+ * Batch updates multiple Product documents.
+ * @param productIds An array of Product document IDs to update.
+ * @param updates A partial Product object containing the fields to update.
+ */
+export async function batchUpdateProducts(productIds: string[], updates: Partial<Omit<Product, 'id' | 'createdAt'>>): Promise<void> {
+  if (productIds.length === 0) {
+    console.warn("No Product IDs provided for batch update.");
+    return;
+  }
+  const batch = writeBatch(db);
+  productIds.forEach(id => {
+    const productRef = doc(db, 'products', id);
+    batch.update(productRef, { ...updates, updatedAt: serverTimestamp() });
+  });
+  try {
+    await batch.commit();
+    console.log(`Batch updated ${productIds.length} Products successfully.`);
+  } catch (error) {
+    console.error("Error batch updating Products:", error);
+    throw new Error("Failed to batch update Products.");
+  }
+}
+
 // =====================================================================
 // System Settings Operations
 // =====================================================================
@@ -335,7 +408,7 @@ export interface AddTransactionData {
   commissionKisanRate: number;
   commissionVyapariRatePerKg: number;
   amountPaidKisan: number; // Cash paid to kisan at the time of transaction
-  amountPaidVyapari: number; // Amount collected from Vyapari at the time of transaction
+  amountPaidVyapari: number; // Cash collected from Vyapari at the time of transaction
   notes?: string;
   mandiRegion: string; // Mandatory now as per Transaction type
   transactionType: "sale_to_vyapari" | "purchase_from_kisan" | "return_vyapari" | "return_kisan";
@@ -448,7 +521,7 @@ export async function addTransaction(data: AddTransactionData): Promise<Transact
       netAmountVyapari: netAmountVyapari,
       amountPaidKisan: data.amountPaidKisan,
       amountPaidVyapari: data.amountPaidVyapari,
-      status: 'completed', // Assuming a successful transaction is 'completed'
+      status: 'completed', // Default to completed for new transactions
       createdAt: serverTimestamp(), // Correctly assign FieldValue
       updatedAt: serverTimestamp(), // Correctly assign FieldValue
       notes: data.notes,
@@ -610,6 +683,36 @@ export async function deleteTransaction(id: string): Promise<void> {
     transaction.delete(transactionRef);
   });
 }
+
+/**
+ * Batch updates multiple Transaction documents.
+ * @param transactionIds An array of Transaction document IDs to update.
+ * @param updates A partial Transaction object containing the fields to update.
+ */
+export async function batchUpdateTransactions(transactionIds: string[], updates: Partial<Omit<Transaction, 'id' | 'createdAt'>>): Promise<void> {
+  if (transactionIds.length === 0) {
+    console.warn("No Transaction IDs provided for batch update.");
+    return;
+  }
+  const batch = writeBatch(db);
+  transactionIds.forEach(id => {
+    const transactionRef = doc(db, 'transactions', id);
+    // Convert Date objects in updates to Timestamps if present
+    const updatePayload: any = { ...updates, updatedAt: serverTimestamp() };
+    if (updatePayload.transactionDate instanceof Date) {
+      updatePayload.transactionDate = Timestamp.fromDate(updatePayload.transactionDate);
+    }
+    batch.update(transactionRef, updatePayload);
+  });
+  try {
+    await batch.commit();
+    console.log(`Batch updated ${transactionIds.length} Transactions successfully.`);
+  } catch (error) {
+    console.error("Error batch updating Transactions:", error);
+    throw new Error("Failed to batch update Transactions.");
+  }
+}
+
 
 // =====================================================================
 // Payment Operations

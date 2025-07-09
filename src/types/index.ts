@@ -1,6 +1,6 @@
 // src/types/index.ts
 
-import { Timestamp } from 'firebase/firestore'; // Import Timestamp for date fields
+import { Timestamp, FieldValue } from 'firebase/firestore'; // Import FieldValue for serverTimestamp
 
 // --- Core User/Authentication Types ---
 export type UserRole = "superadmin" | "admin" | "operator" | "viewer";
@@ -11,10 +11,10 @@ export interface AuthUser {
   displayName: string | null;
   photoURL: string | null;
   role: UserRole;
-  createdAt: Date | Timestamp;
-  lastLoginAt: Date | Timestamp;
+  createdAt: Date | Timestamp | FieldValue; // Allow FieldValue
+  lastLoginAt: Date | Timestamp | FieldValue; // Allow FieldValue
   location?: string;
-  lastActivityAt?: Date | Timestamp;
+  lastActivityAt?: Date | Timestamp | FieldValue; // Allow FieldValue
   featuresUsed?: string[];
   deviceInfo?: {
     browser?: string;
@@ -41,8 +41,8 @@ export interface Kisan {
   isAnonymous?: boolean; // True for "Nakadi Kisan"
   registeredByRef: string; // UID of the user who registered this Kisan
   bakaya?: number; // Keep as number, Firestore supports it.
-  createdAt: Date | Timestamp;
-  updatedAt: Date | Timestamp;
+  createdAt: Date | Timestamp | FieldValue; // Allow FieldValue
+  updatedAt: Date | Timestamp | FieldValue; // Allow FieldValue
   notes?: string; // Optional remarks by operator
 
   // NEW: Crops sold by this Kisan
@@ -54,7 +54,7 @@ export interface Kisan {
   averageMonthlyVolumeKg?: number; // Calculated by CF
   totalTransactionsCount?: number; // Calculated by CF
   loyaltyScore?: number; // Calculated by DS
-  lastTransactionDate?: Date | Timestamp;
+  lastTransactionDate?: Date | Timestamp | FieldValue; // Allow FieldValue
   preferredPaymentMethod?: string;
 }
 
@@ -72,12 +72,12 @@ export interface Vyapari {
   isWhatsappSameAsContact?: boolean;
   whatsappNumber?: string | null;
   alternateContactNumber?: string | null;
-  gstNumber?: string | null;
+  gstNumber?: string | null; // Changed to gstNumber from gstin for consistency with form
   isAnonymous?: boolean;
   registeredByRef: string;
   bakaya?: number;
-  createdAt: Date | Timestamp;
-  updatedAt: Date | Timestamp;
+  createdAt: Date | Timestamp | FieldValue; // Allow FieldValue
+  updatedAt: Date | Timestamp | FieldValue; // Allow FieldValue
   notes?: string | null;
 
   // NEW: Crops bought by this Vyapari
@@ -89,7 +89,7 @@ export interface Vyapari {
   averageMonthlyVolumeKg?: number; // Calculated by CF
   totalTransactionsCount?: number; // Calculated by CF
   loyaltyScore?: number; // Calculated by DS
-  lastTransactionDate?: Date | Timestamp;
+  lastTransactionDate?: Date | Timestamp | FieldValue; // Allow FieldValue
 }
 
 export interface Product {
@@ -100,8 +100,8 @@ export interface Product {
   description?: string | null; // Optional
   defaultUnitPrice?: number | null; // MADE OPTIONAL
   active: boolean; // Is the product currently active/tradable?
-  createdAt: Date | Timestamp;
-  updatedAt: Date | Timestamp;
+  createdAt: Date | Timestamp | FieldValue; // Allow FieldValue
+  updatedAt: Date | Timestamp | FieldValue; // Allow FieldValue
 
   // Data Science Fields (Suggested from external data, user confirmed, or calculated - not handled client-side for now)
   seasonality?: ("Rabi" | "Kharif" | "Zaid" | "Year-round")[];
@@ -127,11 +127,12 @@ export interface Product {
 
 // Define the structure of a single item within a transaction
 export interface TransactionItem {
-  productRef: string; // Reference to the Product document ID
+  productId: string; // Reference to the Product document ID
   productName: string; // Display name of the product (from the Product interface)
   quantity: number; // Quantity in KG
   unitPrice: number; // Price per KG
   totalPrice: number; // Calculated: quantity * unitPrice
+  // unit?: string; // Optional: if you need to store the unit used for this specific item, though Product.unit is 'kg'
 }
 
 export type TransactionStatus = "pending" | "bakaya" | "paid" | "cancelled"; // Explicitly includes 'bakaya'
@@ -163,8 +164,8 @@ export interface Transaction {
   amountPaidVyapari: number; // ADDED: Amount collected from Vyapari at the time of this transaction
 
   status: 'pending' | 'completed' | 'cancelled';
-  createdAt: Date | Timestamp;
-  updatedAt: Date | Timestamp;
+  createdAt: Date | Timestamp | FieldValue; // Allow FieldValue
+  updatedAt: Date | Timestamp | FieldValue; // Allow FieldValue
   notes?: string; // General transaction remarks
 
   // NEW: Denormalized product references for efficient querying
@@ -200,8 +201,8 @@ export interface Payment {
   transactionRef?: string; // Optional: If payment is for a specific transaction
   paymentDate: Date | Timestamp;
   recordedByRef: string; // UID of the user who recorded the payment
-  createdAt: Date | Timestamp;
-  updatedAt: Date | Timestamp;
+  createdAt: Date | Timestamp | FieldValue; // Allow FieldValue
+  updatedAt: Date | Timestamp | FieldValue; // Allow FieldValue
   notes?: string; // Payment specific notes
   paymentReferenceId?: string; // e.g., Cheque No., UPI Txn ID, Bank UTR
   bankDetails?: { accountNumber: string; ifscCode: string }; // Masked details
@@ -213,7 +214,7 @@ export interface Balance {
   entityRef: string; // Document ID of Kisan or Vyapari (redundant but explicit)
   entityType: "kisan" | "vyapari";
   currentOutstanding: number; // The live bakaya for this entity (ideally updated via CF)
-  lastUpdated: Date | Timestamp;
+  lastUpdated: Date | Timestamp | FieldValue; // Allow FieldValue
   lastAffectedTransactionRef?: string; // Ref to last transaction affecting balance
   lastAffectedPaymentRef?: string; // Ref to last payment affecting balance
 
@@ -246,8 +247,8 @@ export interface Bill {
 
   status: "generated" | "sent" | "paid"; // Tracking bill status
   generatedByRef: string; // UID of user who generated bill
-  createdAt: Date | Timestamp;
-  updatedAt: Date | Timestamp;
+  createdAt: Date | Timestamp | FieldValue; // Allow FieldValue
+  updatedAt: Date | Timestamp | FieldValue; // Allow FieldValue
   pdfUrl?: string; // URL to archived PDF in Storage (future)
   isRevisedBill?: boolean;
   previousBillRef?: string; // Link to previous version if revised
@@ -282,7 +283,7 @@ export interface SystemSettings {
     mandiLogoUrl?: string; // Optional URL for Mandi logo in Storage
   };
   updatedByRef: string; // UID of user who last updated settings
-  updatedAt: Date | Timestamp;
+  updatedAt: Date | Timestamp | FieldValue; // Allow FieldValue
 }
 
 // --- Weather Data (Future External Integration - not handled client-side for now) ---
@@ -296,4 +297,57 @@ export interface DailyWeatherData {
   precipitationMm?: number;
   windSpeedKmh?: number;
   externalSource?: string;
+}
+
+// BILLING TYPES (These are the ones specifically for the bill modal, derived from other data)
+
+export interface BillStatementSummary {
+  totalWeight: number;
+  totalCommission: number;
+  totalAmountToKisanGross: number; // Sum of subTotal where entity is kisan
+  totalAmountFromVyapariGross: number; // Sum of subTotal where entity is vyapari
+  totalCashPaidToKisan: number; // Sum of amountPaidKisan from transactions
+  totalCashCollectedFromVyapari: number; // Sum of amountPaidVyapari from transactions
+  netAmountChangeInPeriod: number; // The net change in balance for the entity due to transactions in this period
+}
+
+export interface BillStatement {
+  entityType: 'kisan' | 'vyapari';
+  entityName: string;
+  entityContact?: string | null; // Allow null
+  entityAddress?: string | null; // Allow null
+  entityGst?: string | null;     // Allow null
+  statementDate: Date; // The date the statement was generated
+  startDate?: Date; // Optional: if defined, statement is for this period
+  endDate?: Date;   // Optional: if defined, statement is for this period
+
+  // The bakaya of the entity immediately at the start of the `startDate`
+  // If no startDate is given, this will be 0, as the statement covers all history.
+  openingBalance: number;
+
+  // All transactions for the entity within the specified date range OR all if no dates
+  transactions: Transaction[];
+
+  // The actual current bakaya of the entity from their document in the database
+  currentBakaya: number;
+
+  // Summary for the transactions included IN THIS STATEMENT
+  summary: BillStatementSummary;
+}
+
+// New type for Daily Mandi Summary
+export interface DailyMandiSummary {
+  summaryDate: Date;
+  totalTransactionsCount: number;
+  totalWeightProcessed: number; // Sum of totalWeightInKg from all transactions of the day
+
+  // Financial summary for the selected day's transactions
+  dailyCollectionFromVyaparis: number; // Sum of netAmountVyapari from transactions of the day
+  dailyPaymentsToKisans: number;      // Sum of amountPaidKisan from transactions of the day
+
+  // Overall bakaya across all entities (at the end of the summaryDate)
+  totalMandiOwesToKisans: number;    // Sum of all Kisan.bakaya where Mandi owes Kisan (bakaya > 0)
+  totalVyaparisOweToMandi: number;   // Sum of all Vyapari.bakaya where Vyapari owes Mandi (bakaya > 0)
+
+  netMandiBalance: number;           // totalVyaparisOweToMandi - totalMandiOwesToKisans
 }

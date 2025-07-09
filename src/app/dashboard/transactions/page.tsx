@@ -5,10 +5,12 @@ import React, { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import * as firestoreService from "@/lib/firebase/firestoreService";
-import { Transaction, Kisan, Vyapari, Product } from "@/types"; // Import Product type
-import Modal from '@/components/Modal'; // Assuming you have a Modal component
+import { Transaction, Kisan, Vyapari, Product, BillStatement, DailyMandiSummary } from "@/types";
+import Modal from '@/components/Modal';
+import BillModal from '@/components/BillModal';
+import DailyMandiSummaryModal from '@/components/DailyMandiSummaryModal'; // New modal for mandi summary
 
-// --- CustomTooltip Component (shared, but included for self-containment) ---
+// --- CustomTooltip Component (keep as is) ---
 const CustomTooltip: React.FC<{ content: React.ReactNode; children: React.ReactNode }> = ({ content, children }) => {
   const [isVisible, setIsVisible] = useState(false);
 
@@ -40,16 +42,33 @@ export default function TransactionsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Filter states
+  // Filter states for transaction list (keep as is)
   const [filters, setFilters] = useState({
-    startDate: '', // YYYY-MM-DD format for input
-    endDate: '',   // YYYY-MM-DD format for input
+    startDate: '', //YYYY-MM-DD format for input
+    endDate: '',   //YYYY-MM-DD format for input
     selectedKisanId: '',
     selectedVyapariId: '',
     selectedProductId: '',
   });
 
-  // States for modals
+  // Individual Bill Generation States (Modified)
+  const [showBillModal, setShowBillModal] = useState(false); // For individual Kisan/Vyapari bill
+  const [billType, setBillType] = useState<'kisan' | 'vyapari'>('kisan'); // Default bill type
+  const [selectedBillEntityId, setSelectedBillEntityId] = useState<string>('');
+  const [individualBillStartDate, setIndividualBillStartDate] = useState<string>(''); // Renamed for clarity
+  const [individualBillEndDate, setIndividualBillEndDate] = useState<string>('');     // Renamed for clarity
+  const [individualBillData, setIndividualBillData] = useState<BillStatement | null>(null);
+  const [isGeneratingIndividualBill, setIsGeneratingIndividualBill] = useState(false);
+  const [individualBillError, setIndividualBillError] = useState<string | null>(null);
+
+  // Daily Mandi Summary States (NEW)
+  const [showDailyMandiSummaryModal, setShowDailyMandiSummaryModal] = useState(false);
+  const [dailyMandiSummaryDate, setDailyMandiSummaryDate] = useState<string>(new Date().toISOString().split('T')[0]); // Default to today
+  const [dailyMandiSummaryData, setDailyMandiSummaryData] = useState<DailyMandiSummary | null>(null);
+  const [isGeneratingDailyMandiSummary, setIsGeneratingDailyMandiSummary] = useState(false);
+  const [dailyMandiSummaryError, setDailyMandiSummaryError] = useState<string | null>(null);
+
+  // States for modals (existing)
   const [showKisanModal, setShowKisanModal] = useState(false);
   const [showVyapariModal, setShowVyapariModal] = useState(false);
   const [selectedKisan, setSelectedKisan] = useState<Kisan | null>(null);
@@ -70,7 +89,16 @@ export default function TransactionsPage() {
       setVyaparis(fetchedVyaparis);
       setProducts(fetchedProducts);
 
-      // Prepare filters for the Firestore service call
+      // Set default individual bill dates (e.g., first load)
+      if (!individualBillStartDate && !individualBillEndDate) {
+        const today = new Date();
+        const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+        setIndividualBillStartDate(firstDayOfMonth.toISOString().split('T')[0]);
+        setIndividualBillEndDate(today.toISOString().split('T')[0]);
+      }
+
+
+      // Prepare filters for the Firestore service call for transaction list
       const firestoreFilters: firestoreService.TransactionFilters = {};
       if (filters.startDate) {
         firestoreFilters.startDate = new Date(filters.startDate);
@@ -99,13 +127,13 @@ export default function TransactionsPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [filters]); // Re-fetch when filters change
+  }, [filters, individualBillStartDate, individualBillEndDate]); // Updated dependencies
 
   useEffect(() => {
     fetchAllData();
   }, [fetchAllData]);
 
-  // Handlers for filter changes
+  // Handlers for filter changes for transaction list (keep as is)
   const handleFilterChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     setFilters(prevFilters => ({
@@ -129,9 +157,88 @@ export default function TransactionsPage() {
     // fetchAllData will be called due to filter state change
   };
 
-  // Handlers for modal display
+  // Handlers for Individual Bill Generation (Modified)
+  const handleIndividualBillTypeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    setBillType(e.target.value as 'kisan' | 'vyapari');
+    setSelectedBillEntityId(''); // Reset entity selection when type changes
+  };
+
+  const handleIndividualBillEntityChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    setSelectedBillEntityId(e.target.value);
+  };
+
+  const handleIndividualBillDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
+    if (name === 'individualBillStartDate') {
+      setIndividualBillStartDate(value);
+    } else {
+      setIndividualBillEndDate(value);
+    }
+  };
+
+  const handleGenerateIndividualBill = async () => {
+    if (!selectedBillEntityId) {
+      setIndividualBillError(`Please select a ${billType === 'kisan' ? 'Kisan' : 'Vyapari'} to generate a bill.`);
+      return;
+    }
+
+    setIsGeneratingIndividualBill(true);
+    setIndividualBillError(null);
+    setIndividualBillData(null);
+
+    try {
+      // Pass startDate and endDate only if they are both provided and valid
+      const statementOptions: firestoreService.GetBillStatementOptions = {
+        entityType: billType,
+        entityId: selectedBillEntityId,
+      };
+
+      if (individualBillStartDate && individualBillEndDate) {
+          statementOptions.startDate = new Date(individualBillStartDate);
+          statementOptions.endDate = new Date(individualBillEndDate);
+      }
+
+      const statement = await firestoreService.getBillStatement(statementOptions);
+      setIndividualBillData(statement);
+      setShowBillModal(true); // Open the individual bill modal
+    } catch (err: any) {
+      console.error("Error generating individual bill:", err);
+      setIndividualBillError(`Failed to generate bill: ${err.message || "An unknown error occurred"}`);
+    } finally {
+      setIsGeneratingIndividualBill(false);
+    }
+  };
+
+  // Handlers for Daily Mandi Summary (NEW)
+  const handleDailyMandiSummaryDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setDailyMandiSummaryDate(e.target.value);
+  };
+
+  const handleGenerateDailyMandiSummary = async () => {
+    if (!dailyMandiSummaryDate) {
+      setDailyMandiSummaryError("Please select a date for the daily Mandi summary.");
+      return;
+    }
+
+    setIsGeneratingDailyMandiSummary(true);
+    setDailyMandiSummaryError(null);
+    setDailyMandiSummaryData(null);
+
+    try {
+      const summary = await firestoreService.getDailyMandiSummary(new Date(dailyMandiSummaryDate));
+      setDailyMandiSummaryData(summary);
+      setShowDailyMandiSummaryModal(true); // Open the daily mandi summary modal
+    } catch (err: any) {
+      console.error("Error generating daily Mandi summary:", err);
+      setDailyMandiSummaryError(`Failed to generate daily Mandi summary: ${err.message || "An unknown error occurred"}`);
+    } finally {
+      setIsGeneratingDailyMandiSummary(false);
+    }
+  };
+
+  // Handlers for modal display (Kisan/Vyapari details) (keep as is)
   const handleKisanClick = (kisanId: string) => {
-    const kisan = kisans.find(k => k.id === kisanId); // Find from fetched kisans
+    const kisan = kisans.find(k => k.id === kisanId);
     if (kisan) {
       setSelectedKisan(kisan);
       setShowKisanModal(true);
@@ -139,14 +246,14 @@ export default function TransactionsPage() {
   };
 
   const handleVyapariClick = (vyapariId: string) => {
-    const vyapari = vyaparis.find(v => v.id === vyapariId); // Find from fetched vyaparis
+    const vyapari = vyaparis.find(v => v.id === vyapariId);
     if (vyapari) {
       setSelectedVyapari(vyapari);
       setShowVyapariModal(true);
     }
   };
 
-  // Render logic for Kisan/Vyapari Modals
+  // Render logic for Kisan/Vyapari Modals (keep as is)
   const renderKisanModal = () => {
     if (!selectedKisan) return null;
     return (
@@ -235,9 +342,9 @@ export default function TransactionsPage() {
         </Link>
       </div>
 
-      {/* Filter Section */}
+      {/* Filter Section for Transactions List (keep as is) */}
       <div className="bg-white shadow-md rounded-lg p-6 mb-6">
-        <h2 className="text-xl font-semibold mb-4 text-gray-700">Filter Transactions</h2>
+        <h2 className="text-xl font-semibold mb-4 text-gray-700">Filter Transactions List</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {/* Start Date */}
           <div>
@@ -339,6 +446,125 @@ export default function TransactionsPage() {
           </button>
         </div>
       </div>
+
+      {/* Individual Bill Generation Section (Modified) */}
+      <div className="bg-white shadow-md rounded-lg p-6 mb-6">
+        <h2 className="text-xl font-semibold mb-4 text-gray-700">Generate Individual Bill/Statement</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 items-end">
+          {/* Bill Type */}
+          <div>
+            <label htmlFor="billType" className="block text-sm font-medium text-gray-700">
+              Bill For
+            </label>
+            <select
+              id="billType"
+              name="billType"
+              value={billType}
+              onChange={handleIndividualBillTypeChange}
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border"
+            >
+              <option value="kisan">Individual Kisan</option>
+              <option value="vyapari">Individual Vyapari</option>
+            </select>
+          </div>
+          {/* Select Entity */}
+          <div>
+            <label htmlFor="selectedBillEntityId" className="block text-sm font-medium text-gray-700">
+              Select {billType === 'kisan' ? 'Kisan' : 'Vyapari'}
+            </label>
+            <select
+              id="selectedBillEntityId"
+              name="selectedBillEntityId"
+              value={selectedBillEntityId}
+              onChange={handleIndividualBillEntityChange}
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border"
+            >
+              <option value="">Select {billType === 'kisan' ? 'Kisan' : 'Vyapari'}</option>
+              {billType === 'kisan'
+                ? kisans.map(kisan => <option key={kisan.id} value={kisan.id}>{kisan.name}</option>)
+                : vyaparis.map(vyapari => <option key={vyapari.id} value={vyapari.id}>{vyapari.name}</option>)
+              }
+            </select>
+          </div>
+          {/* Bill Start Date (Optional) */}
+          <div>
+            <label htmlFor="individualBillStartDate" className="block text-sm font-medium text-gray-700">
+              Period Start Date (Optional)
+            </label>
+            <input
+              type="date"
+              id="individualBillStartDate"
+              name="individualBillStartDate"
+              value={individualBillStartDate}
+              onChange={handleIndividualBillDateChange}
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border"
+            />
+          </div>
+          {/* Bill End Date (Optional) */}
+          <div>
+            <label htmlFor="individualBillEndDate" className="block text-sm font-medium text-gray-700">
+              Period End Date (Optional)
+            </label>
+            <input
+              type="date"
+              id="individualBillEndDate"
+              name="individualBillEndDate"
+              value={individualBillEndDate}
+              onChange={handleIndividualBillDateChange}
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border"
+            />
+          </div>
+        </div>
+        <div className="flex justify-end mt-6">
+          <button
+            type="button"
+            onClick={handleGenerateIndividualBill}
+            disabled={isGeneratingIndividualBill}
+            className={`px-6 py-3 font-semibold rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 ${
+              isGeneratingIndividualBill
+                ? 'bg-gray-400 cursor-not-allowed'
+                : 'bg-teal-600 text-white hover:bg-teal-700 focus:ring-teal-500'
+            }`}
+          >
+            {isGeneratingIndividualBill ? 'Generating...' : 'Generate Bill/Statement'}
+          </button>
+        </div>
+        {individualBillError && <p className="text-red-500 mt-4 text-center">{individualBillError}</p>}
+      </div>
+
+      {/* Daily Mandi Summary Section (NEW) */}
+      <div className="bg-white shadow-md rounded-lg p-6 mb-6">
+        <h2 className="text-xl font-semibold mb-4 text-gray-700">Generate Daily Mandi Summary</h2>
+        <div className="flex items-end space-x-4">
+          <div>
+            <label htmlFor="dailyMandiSummaryDate" className="block text-sm font-medium text-gray-700">
+              Select Date
+            </label>
+            <input
+              type="date"
+              id="dailyMandiSummaryDate"
+              name="dailyMandiSummaryDate"
+              value={dailyMandiSummaryDate}
+              onChange={handleDailyMandiSummaryDateChange}
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={handleGenerateDailyMandiSummary}
+            disabled={isGeneratingDailyMandiSummary}
+            className={`px-6 py-3 font-semibold rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 ${
+              isGeneratingDailyMandiSummary
+                ? 'bg-gray-400 cursor-not-allowed'
+                : 'bg-green-600 text-white hover:bg-green-700 focus:ring-green-500'
+            }`}
+          >
+            {isGeneratingDailyMandiSummary ? 'Generating...' : 'Generate Daily Mandi Summary'}
+          </button>
+        </div>
+        {dailyMandiSummaryError && <p className="text-red-500 mt-4 text-center">{dailyMandiSummaryError}</p>}
+      </div>
+
 
       {transactions.length === 0 ? (
         <div className="bg-white p-6 rounded-lg shadow-md text-center">
@@ -469,9 +695,28 @@ export default function TransactionsPage() {
           </table>
         </div>
       )}
-      {/* Render Modals */}
+      {/* Render Modals (keep as is) */}
       {renderKisanModal()}
       {renderVyapariModal()}
+
+      {/* Individual Bill Generation Modal (Modified) */}
+      {showBillModal && individualBillData && (
+        <BillModal
+          isOpen={showBillModal}
+          onClose={() => setShowBillModal(false)}
+          billData={individualBillData}
+          // billType is no longer needed here as entityType is in billData
+        />
+      )}
+
+      {/* Daily Mandi Summary Modal (NEW) */}
+      {showDailyMandiSummaryModal && dailyMandiSummaryData && (
+        <DailyMandiSummaryModal
+          isOpen={showDailyMandiSummaryModal}
+          onClose={() => setShowDailyMandiSummaryModal(false)}
+          summaryData={dailyMandiSummaryData}
+        />
+      )}
     </div>
   );
 }

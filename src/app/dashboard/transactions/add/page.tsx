@@ -1,1077 +1,721 @@
 // src/app/dashboard/transactions/add/page.tsx
 "use client";
 
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { auth } from "@/lib/firebase/clientApp";
-import { db } from "@/lib/firebase/clientApp"; // Import db for batch writes
-import { doc, writeBatch, collection } from "firebase/firestore"; // Import Firestore functions, ADDED 'collection'
-
 import {
   Kisan,
   Vyapari,
   Product,
-  SystemSettings, // Make sure SystemSettings type includes mandiDefaults.mandiRegion
-  Transaction,
   TransactionItem,
 } from "@/types";
-import * as firestoreService from "@/lib/firebase/firestoreService"; // Corrected typo comment
+import * as firestoreService from "@/lib/firebase/firestoreService";
+import { generateFirestoreId } from "@/lib/firebase/firestoreService"; // Assuming this utility is available
+import { getAuth } from "firebase/auth"; // For getting current user's UID
+import { app } from "@/lib/firebase/clientApp"; // Assuming Firebase app is initialized here
 
-import Modal from "@/components/Modal";
-import AddKisanQuickForm from "@/components/AddKisanQuickForm";
-import AddVyapariQuickForm from "@/components/AddVyapariQuickForm";
-import AddProductQuickForm from "@/components/AddProductQuickForm";
-
-interface FormTransactionItem extends TransactionItem {
-  tempId: string; // Used for UI keying before Firestore ID is assigned
+// Define a local type for form items that aligns with TransactionItem
+interface FormTransactionItem {
+  tempId: string; // Used for unique keys in the form UI before saving
+  productId: string; // This should match TransactionItem's productId
+  productName: string;
+  quantity: number;
+  unitPrice: number;
+  totalPrice: number;
 }
 
-export default function RecordTransactionPage() {
+export default function AddTransactionPage() {
   const router = useRouter();
+  const auth = getAuth(app); // Get auth instance
 
-  // State for fetched data
   const [kisans, setKisans] = useState<Kisan[]>([]);
   const [vyaparis, setVyaparis] = useState<Vyapari[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
-  const [systemSettings, setSystemSettings] = useState<SystemSettings | null>(
-    null
-  );
-
-  // Loading and error states for initial data fetch
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  // Form states
-  const [selectedKisanId, setSelectedKisanId] = useState<string>("");
-  const [selectedVyapariId, setSelectedVyapariId] = useState<string>("");
-  const [transactionDate, setTransactionDate] = useState<string>(
-    new Date().toISOString().split("T")[0] //YYYY-MM-DD format
-  );
-  const [transactionItems, setTransactionItems] = useState<
-    FormTransactionItem[]
-  >([]);
-  const [notes, setNotes] = useState<string>("");
-
-  // Bakaya related states
-  const [kisanBakaya, setKisanBakaya] = useState<number | null>(null);
-  const [vyapariBakaya, setVyapariBakaya] = useState<number | null>(null);
-  const [amountPaidKisan, setAmountPaidKisan] = useState<number>(0);
-  const [amountPaidVyapari, setAmountPaidVyapari] = useState<number>(0);
-
-  // State for submission process
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [submitMessage, setSubmitMessage] = useState<{
-    type: "success" | "error";
-    text: string;
-  } | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  // State for quick-add modals
-  const [showAddKisanModal, setShowAddKisanModal] = useState(false);
-  const [showAddVyapariModal, setShowAddVyapariModal] = useState(false);
-  const [showAddProductModal, setShowAddProductModal] = useState(false);
+  const [formData, setFormData] = useState({
+    transactionDate: new Date().toISOString().split("T")[0], // YYYY-MM-DD
+    kisanRef: "",
+    vyapariRef: "",
+    commissionKisanRate: 0, // Default commission for Kisan
+    commissionVyapariRatePerKg: 0, // Default commission per Kg for Vyapari
+    amountPaidKisan: 0, // Cash paid to kisan at transaction time
+    amountPaidVyapari: 0, // Cash collected from vyapari at transaction time
+    notes: "",
+    mandiRegion: "Default Mandi Region", // Placeholder, ideally from system settings
+    transactionType: "sale_to_vyapari" as "sale_to_vyapari" | "purchase_from_kisan" | "return_vyapari" | "return_kisan",
+  });
 
-  // --- Data Fetching Effect ---
-  const fetchData = useCallback(async () => {
-    try {
-      setIsLoading(true);
-      setError(null);
+  const [formItems, setFormItems] = useState<FormTransactionItem[]>([]);
 
-      const [fetchedKisans, fetchedVyaparis, fetchedProducts, fetchedSettings] =
-        await Promise.all([
-          firestoreService.getKisans(),
-          firestoreService.getVyaparis(),
-          firestoreService.getProducts(),
-          firestoreService.getSystemSettings(),
-        ]);
-
-      setKisans(fetchedKisans);
-      setVyaparis(fetchedVyaparis);
-      setProducts(fetchedProducts);
-      setSystemSettings(fetchedSettings); // Set system settings state
-
-    } catch (err: any) {
-      console.error("Error fetching data for transaction page:", err);
-      setError(
-        `Failed to load data: ${err.message || "An unknown error occurred"}`
-      );
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
+  // Fetch initial data (Kisans, Vyaparis, Products)
   useEffect(() => {
+    const fetchData = async () => {
+      try {
+        setIsLoading(true);
+        setError(null);
+        const [fetchedKisans, fetchedVyaparis, fetchedProducts] =
+          await Promise.all([
+            firestoreService.getKisans(),
+            firestoreService.getVyaparis(),
+            firestoreService.getProducts(),
+          ]);
+        setKisans(fetchedKisans);
+        setVyaparis(fetchedVyaparis);
+        setProducts(fetchedProducts);
+
+        // Set default commission rates from SystemSettings if available
+        const settings = await firestoreService.getSystemSettings();
+        if (settings) {
+          setFormData((prev) => ({
+            ...prev,
+            commissionKisanRate: settings.commissionKisanRate || 0,
+            commissionVyapariRatePerKg: settings.commissionVyapariRatePerKg || 0,
+            mandiRegion: settings.mandiDefaults?.mandiRegion || "Default Mandi Region",
+          }));
+        }
+      } catch (err: any) {
+        console.error("Error fetching initial data:", err);
+        setError(`Failed to load data: ${err.message}`);
+      } finally {
+        setIsLoading(false);
+      }
+    };
     fetchData();
-  }, [fetchData]);
-
-    // New effect to set default mandi region once systemSettings are loaded
-    const [mandiRegion, setMandiRegion] = useState<string>('N/A'); // State for the mandi region to be displayed/saved
-    useEffect(() => {
-        if (systemSettings) {
-            // Correctly access mandiRegion from mandiDefaults
-            setMandiRegion(systemSettings.mandiDefaults?.mandiRegion || 'N/A');
-        }
-    }, [systemSettings]);
-
-
-  // --- Effect to fetch Kisan Bakaya when selectedKisanId changes ---
-  useEffect(() => {
-    const fetchKisanBakaya = async () => {
-      if (selectedKisanId) {
-        const kisan = kisans.find((k) => k.id === selectedKisanId);
-        if (kisan) {
-          setKisanBakaya(kisan.bakaya || 0); // Assuming 'bakaya' field exists
-        } else {
-          setKisanBakaya(null);
-        }
-      } else {
-        setKisanBakaya(null);
-      }
-      setAmountPaidKisan(0); // Reset paid amount when Kisan changes
-    };
-    fetchKisanBakaya();
-  }, [selectedKisanId, kisans]); // Depend on kisans array to react to quick add
-
-  // --- Effect to fetch Vyapari Bakaya when selectedVyapariId changes ---
-  useEffect(() => {
-    const fetchVyapariBakaya = async () => {
-      if (selectedVyapariId) {
-        const vyapari = vyaparis.find((v) => v.id === selectedVyapariId);
-        if (vyapari) {
-          setVyapariBakaya(vyapari.bakaya || 0); // Assuming 'bakaya' field exists
-        } else {
-          setVyapariBakaya(null);
-        }
-      } else {
-        setVyapariBakaya(null);
-      }
-      setAmountPaidVyapari(0); // Reset paid amount when Vyapari changes
-    };
-    fetchVyapariBakaya();
-  }, [selectedVyapariId, vyaparis]); // Depend on vyaparis array to react to quick add
-
-  // --- Handlers for Transaction Items ---
-  const handleAddItem = useCallback(() => {
-    const newItem: FormTransactionItem = {
-      tempId:
-        Date.now().toString() + Math.random().toString(36).substring(2, 9),
-      productRef: "",
-      productName: "",
-      quantity: 0,
-      unitPrice: 0,
-      totalPrice: 0,
-    };
-    setTransactionItems((prevItems) => [...prevItems, newItem]);
   }, []);
 
-  const handleUpdateItem = useCallback(
-    (
-      index: number,
-      field: keyof Omit<TransactionItem, "totalPrice">,
-      value: any
-    ) => {
-      setTransactionItems((prevItems) => {
-        const updatedItems = [...prevItems];
-        const itemToUpdate = { ...updatedItems[index] };
+  const handleFormChange = (
+    e: React.ChangeEvent<
+      HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
+    >
+  ) => {
+    const { name, value, type } = e.target;
+    if (type === "number") {
+      setFormData({ ...formData, [name]: parseFloat(value) || 0 });
+    } else {
+      setFormData({ ...formData, [name]: value });
+    }
+  };
 
-        if (field === "productRef") {
-          itemToUpdate.productRef = value;
-          const selectedProduct = products.find((p) => p.id === value);
-          itemToUpdate.productName = selectedProduct
-            ? selectedProduct.name
-            : "";
-        } else {
-          (itemToUpdate as any)[field] = parseFloat(value) || 0;
+  const handleAddItem = () => {
+    setFormItems([
+      ...formItems,
+      {
+        tempId: generateFirestoreId(), // Unique ID for React list key
+        productId: "",
+        productName: "", // Will be populated when product is selected
+        quantity: 0,
+        unitPrice: 0,
+        totalPrice: 0,
+      },
+    ]);
+  };
+
+  const handleRemoveItem = (tempId: string) => {
+    setFormItems(formItems.filter((item) => item.tempId !== tempId));
+  };
+
+  const handleItemChange = (
+    tempId: string,
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
+  ) => {
+    const { name, value } = e.target;
+
+    setFormItems((prevItems) =>
+      prevItems.map((item) => {
+        if (item.tempId === tempId) {
+          let updatedItem = { ...item, [name]: value };
+
+          // If product is selected, update product name and default unit price
+          if (name === "productId") {
+            const selectedProduct = products.find((p) => p.id === value);
+            if (selectedProduct) {
+              updatedItem.productName = selectedProduct.name;
+              updatedItem.unitPrice = selectedProduct.defaultUnitPrice || 0;
+            } else {
+              updatedItem.productName = "";
+              updatedItem.unitPrice = 0;
+            }
+          }
+
+          // Recalculate total price if quantity or unit price changes
+          if (name === "quantity" || name === "unitPrice") {
+            const quantity = parseFloat(updatedItem.quantity.toString()) || 0;
+            const unitPrice = parseFloat(updatedItem.unitPrice.toString()) || 0;
+            updatedItem.totalPrice = quantity * unitPrice;
+          }
+          return updatedItem;
         }
-
-        itemToUpdate.totalPrice =
-          itemToUpdate.quantity * itemToUpdate.unitPrice;
-        updatedItems[index] = itemToUpdate;
-
-        return updatedItems;
-      });
-    },
-    [products]
-  );
-
-  const handleRemoveItem = useCallback((tempIdToRemove: string) => {
-    setTransactionItems((prevItems) =>
-      prevItems.filter((item) => item.tempId !== tempIdToRemove)
+        return item;
+      })
     );
-  }, []);
+  };
 
-  // --- Handlers for Quick Add Modals ---
-  // Updated to accept newId: string
-  const handleKisanAdded = useCallback(
-    async (newKisanId: string) => { // Changed type to string
-      setShowAddKisanModal(false);
-      await fetchData();
-      setSelectedKisanId(newKisanId);
-      setSubmitMessage({
-        type: "success",
-        text: "New Kisan added successfully!",
-      });
-      setTimeout(() => setSubmitMessage(null), 3000);
-    },
-    [fetchData]
+  // Calculate totals for display
+  const { subTotal, totalWeightInKg } = useMemo(() => {
+    let calculatedSubTotal = 0;
+    let calculatedTotalWeightInKg = 0;
+    formItems.forEach((item) => {
+      calculatedSubTotal += item.totalPrice;
+      calculatedTotalWeightInKg += item.quantity;
+    });
+    return {
+      subTotal: calculatedSubTotal,
+      totalWeightInKg: calculatedTotalWeightInKg,
+    };
+  }, [formItems]);
+
+  const commissionKisanAmount = useMemo(
+    () => subTotal * (formData.commissionKisanRate / 100),
+    [subTotal, formData.commissionKisanRate]
+  );
+  const commissionVyapariAmount = useMemo(
+    () => totalWeightInKg * formData.commissionVyapariRatePerKg,
+    [totalWeightInKg, formData.commissionVyapariRatePerKg]
+  );
+  const totalCommission = useMemo(
+    () => commissionKisanAmount + commissionVyapariAmount,
+    [commissionKisanAmount, commissionVyapariAmount]
   );
 
-  const handleCancelAddKisan = useCallback(() => {
-    setShowAddKisanModal(false);
-  }, []);
-
-  // Updated to accept newId: string
-  const handleVyapariAdded = useCallback(
-    async (newVyapariId: string) => { // Changed type to string
-      setShowAddVyapariModal(false);
-      await fetchData();
-      setSelectedVyapariId(newVyapariId);
-      setSubmitMessage({
-        type: "success",
-        text: "New Vyapari added successfully!",
-      });
-      setTimeout(() => setSubmitMessage(null), 3000);
-    },
-    [fetchData]
+  const netAmountKisan = useMemo(
+    () => subTotal - commissionKisanAmount - formData.amountPaidKisan,
+    [subTotal, commissionKisanAmount, formData.amountPaidKisan]
+  );
+  const netAmountVyapari = useMemo(
+    () => subTotal + commissionVyapariAmount - formData.amountPaidVyapari,
+    [subTotal, commissionVyapariAmount, formData.amountPaidVyapari]
   );
 
-  const handleCancelAddVyapari = useCallback(() => {
-    setShowAddVyapariModal(false);
-  }, []);
-
-  // Updated to accept newId: string
-  const handleProductAdded = useCallback(
-    async (newProductId: string) => { // Changed type to string
-      setShowAddProductModal(false);
-      await fetchData();
-      // No need to select product here, as it's for transaction items
-      setSubmitMessage({
-        type: "success",
-        text: "New Product added successfully!",
-      });
-      setTimeout(() => setSubmitMessage(null), 3000);
-    },
-    [fetchData]
-  );
-
-  const handleCancelAddProduct = useCallback(() => {
-    setShowAddProductModal(false);
-  }, []);
-
-  // --- Calculated Values (useMemo for efficiency) ---
-  const subTotal = useMemo(() => {
-    return transactionItems.reduce((sum, item) => sum + item.totalPrice, 0);
-  }, [transactionItems]);
-
-  const totalWeightInKg = useMemo(() => {
-    return transactionItems.reduce((sum, item) => sum + item.quantity, 0);
-  }, [transactionItems]);
-
-  // CORRECTED: Access commission rates directly from systemSettings
-  const displayCommissionKisanRate = systemSettings?.commissionKisanRate || 0;
-  const displayCommissionVyapariRatePerKg =
-    systemSettings?.commissionVyapariRatePerKg || 0;
-
-  const displayCommissionKisanAmount = useMemo(() => {
-    return subTotal * displayCommissionKisanRate;
-  }, [subTotal, displayCommissionKisanRate]);
-
-  const displayCommissionVyapariAmount = useMemo(() => {
-    return totalWeightInKg * displayCommissionVyapariRatePerKg;
-  }, [totalWeightInKg, displayCommissionVyapariRatePerKg]);
-
-  const displayTotalCommission = useMemo(() => {
-    return displayCommissionKisanAmount + displayCommissionVyapariAmount;
-  }, [displayCommissionKisanAmount, displayCommissionVyapariAmount]);
-
-  const displayNetAmountKisan = useMemo(() => {
-    return subTotal - displayCommissionKisanAmount;
-  }, [subTotal, displayCommissionKisanAmount]);
-
-  const displayNetAmountVyapari = useMemo(() => {
-    return subTotal + displayCommissionVyapariAmount;
-  }, [subTotal, displayCommissionVyapariAmount]);
-
-  // --- Calculate Net Bakaya changes ---
-  // These represent the 'impact' of the current transaction on the bakaya, before payments are considered
-  const kisanNetChange = useMemo(() => {
-    return displayNetAmountKisan; // Amount Mandi needs to pay Kisan for this transaction
-  }, [displayNetAmountKisan]);
-
-  const vyapariNetChange = useMemo(() => {
-    return displayNetAmountVyapari; // Amount Vyapari needs to pay Mandi for this transaction
-  }, [displayNetAmountVyapari]);
-
-  const newKisanBakaya = useMemo(() => {
-    if (kisanBakaya === null) return null;
-    // Current Bakaya (Kisan owes Mandi if positive, Mandi owes Kisan if negative)
-    // - kisanNetChange (Mandi owes Kisan, so this reduces Kisan's debt or increases Mandi's debt to Kisan)
-    // + amountPaidKisan (Mandi pays Kisan, so this reduces Mandi's debt to Kisan or increases Kisan's debt to Mandi if paid more than owed)
-    return (kisanBakaya - kisanNetChange + amountPaidKisan).toFixed(2);
-  }, [kisanBakaya, kisanNetChange, amountPaidKisan]);
-
-  const newVyapariBakaya = useMemo(() => {
-    if (vyapariBakaya === null) return null;
-    // Current Bakaya (Vyapari owes Mandi if positive, Mandi owes Vyapari if negative)
-    // + vyapariNetChange (Vyapari owes Mandi, so this increases Vyapari's debt or reduces Mandi's debt to Vyapari)
-    // - amountPaidVyapari (Vyapari pays Mandi, so this reduces Vyapari's debt to Mandi or increases Mandi's debt to Vyapari)
-    return (vyapariBakaya + vyapariNetChange - amountPaidVyapari).toFixed(2);
-  }, [vyapariBakaya, vyapariNetChange, amountPaidVyapari]);
-
-  // --- Form Submission Logic ---
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSubmitMessage(null);
     setIsSubmitting(true);
+    setError(null);
+    setSuccessMessage(null);
 
-    if (
-      !selectedKisanId ||
-      !selectedVyapariId ||
-      transactionItems.length === 0
-    ) {
-      setSubmitMessage({
-        type: "error",
-        text: "Please select a Kisan and Vyapari, and add at least one item.",
-      });
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      setError("User not authenticated. Please log in.");
       setIsSubmitting(false);
       return;
     }
 
-    const invalidItems = transactionItems.some(
-      (item) => !item.productRef || item.quantity <= 0 || item.unitPrice <= 0
-    );
-    if (invalidItems) {
-      setSubmitMessage({
-        type: "error",
-        text: "All items must have a selected product, positive quantity, and positive unit price.",
-      });
+    if (!formData.kisanRef || !formData.vyapariRef || formItems.length === 0) {
+      setError("Please fill in all required fields and add at least one item.");
       setIsSubmitting(false);
       return;
     }
 
-    if (!systemSettings) {
-      setSubmitMessage({
-        type: "error",
-        text: "System settings not loaded. Cannot calculate commissions. Please refresh the page.",
-      });
-      setIsSubmitting(false);
-      return;
-    }
-
-    const selectedKisan = kisans.find((k) => k.id === selectedKisanId);
-    const selectedVyapari = vyaparis.find((v) => v.id === selectedVyapariId);
-
-    if (!selectedKisan) {
-      setSubmitMessage({
-        type: "error",
-        text: "Selected Kisan not found. Please re-select or add a new Kisan.",
-      });
-      setIsSubmitting(false);
-      return;
-    }
-    if (!selectedVyapari) {
-      setSubmitMessage({
-        type: "error",
-        text: "Selected Vyapari not found. Please re-select or add a new Vyapari.",
-      });
-      setIsSubmitting(false);
-      return;
-    }
+    // Prepare items for Firestore (ensure they match TransactionItem structure)
+    const itemsForFirestore: TransactionItem[] = formItems.map(item => ({
+      productId: item.productId,
+      productName: item.productName,
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+      totalPrice: item.totalPrice,
+    }));
 
     try {
-      const currentUser = auth.currentUser;
-
-      if (!currentUser) {
-        setSubmitMessage({
-          type: "error",
-          text: "You must be logged in to record a transaction.",
-        });
-        setIsSubmitting(false);
-        router.push("/login");
-        return;
-      }
-
-      // Initialize Firestore batch for atomic writes
-      const batch = writeBatch(db);
-
-      const newTransaction: Omit<
-        Transaction,
-        "id" | "createdAt" | "updatedAt"
-      > = {
-        kisanRef: selectedKisanId,
-        kisanName: selectedKisan.name,
-        vyapariRef: selectedVyapariId,
-        vyapariName: selectedVyapari.name,
-        transactionDate: new Date(transactionDate),
-        recordedByRef: currentUser.uid,
-        items: transactionItems.map((item) => ({
-          productRef: item.productRef,
-          productName: item.productName,
-          quantity: item.quantity,
-          unitPrice: item.unitPrice,
-          totalPrice: item.totalPrice,
-        })),
-        subTotal: parseFloat(subTotal.toFixed(2)),
-        totalWeightInKg: parseFloat(totalWeightInKg.toFixed(2)),
-
-        commissionKisanRate: systemSettings.commissionKisanRate,
-        commissionKisanAmount: parseFloat(
-          displayCommissionKisanAmount.toFixed(2)
-        ),
-        commissionVyapariRatePerKg: systemSettings.commissionVyapariRatePerKg,
-        commissionVyapariAmount: parseFloat(
-          displayCommissionVyapariAmount.toFixed(2)
-        ),
-        totalCommission: parseFloat(displayTotalCommission.toFixed(2)),
-
-        netAmountKisan: parseFloat(displayNetAmountKisan.toFixed(2)),
-        netAmountVyapari: parseFloat(displayNetAmountVyapari.toFixed(2)),
-
-        // Include amounts paid at the time of transaction
-        amountPaidKisan: parseFloat(amountPaidKisan.toFixed(2)),
-        amountPaidVyapari: parseFloat(amountPaidVyapari.toFixed(2)),
-        transactionType: "sale_to_vyapari", // Assuming a default type for now, adjust if needed
-        notes: notes || "",
-        status: "pending", // Or 'completed' based on your logic for initial status
-        mandiRegion: mandiRegion, // Use the mandiRegion state, which now gets its value from systemSettings.mandiDefaults?.mandiRegion
+      const transactionData = {
+        transactionDate: new Date(formData.transactionDate),
+        kisanRef: formData.kisanRef,
+        vyapariRef: formData.vyapariRef,
+        recordedByRef: currentUser.uid, // User who recorded the transaction
+        items: itemsForFirestore,
+        subTotal: subTotal,
+        totalWeightInKg: totalWeightInKg,
+        commissionKisanRate: formData.commissionKisanRate,
+        commissionKisanAmount: commissionKisanAmount,
+        commissionVyapariRatePerKg: formData.commissionVyapariRatePerKg,
+        commissionVyapariAmount: commissionVyapariAmount,
+        totalCommission: totalCommission,
+        netAmountKisan: netAmountKisan,
+        netAmountVyapari: netAmountVyapari,
+        amountPaidKisan: formData.amountPaidKisan,
+        amountPaidVyapari: formData.amountPaidVyapari,
+        status: 'completed' as 'completed', // Default to completed for new transactions
+        notes: formData.notes,
+        productRefs: formItems.map(item => item.productId), // Denormalized product IDs
+        mandiRegion: formData.mandiRegion,
+        transactionType: formData.transactionType,
       };
 
-      // Add the new transaction to the batch
-      const transactionRef = doc(
-        collection(db, "transactions"), // Corrected: Added 'collection'
-        firestoreService.generateFirestoreId()
-      ); // Generate a new ID
-      batch.set(transactionRef, {
-        ...newTransaction,
-        createdAt: firestoreService.serverTimestamp(),
-        updatedAt: firestoreService.serverTimestamp(),
-        id: transactionRef.id, // Add the generated ID to the document
+      await firestoreService.addTransaction(transactionData);
+      setSuccessMessage("Transaction recorded successfully!");
+      // Optionally reset form or redirect
+      setFormData({
+        transactionDate: new Date().toISOString().split("T")[0],
+        kisanRef: "",
+        vyapariRef: "",
+        commissionKisanRate: 0,
+        commissionVyapariRatePerKg: 0,
+        amountPaidKisan: 0,
+        amountPaidVyapari: 0,
+        notes: "",
+        mandiRegion: "Default Mandi Region",
+        transactionType: "sale_to_vyapari",
       });
-
-      // Update Kisan's bakaya
-      const kisanRef = doc(db, "kisans", selectedKisanId);
-      const calculatedKisanNewBakaya =
-        (selectedKisan.bakaya || 0) - displayNetAmountKisan + amountPaidKisan; // CORRECTED LOGIC
-      batch.update(kisanRef, {
-        bakaya: parseFloat(calculatedKisanNewBakaya.toFixed(2)),
-      });
-
-      // Update Vyapari's bakaya
-      const vyapariRef = doc(db, "vyaparis", selectedVyapariId);
-      const calculatedVyapariNewBakaya =
-        (selectedVyapari.bakaya || 0) +
-        displayNetAmountVyapari -
-        amountPaidVyapari;
-      batch.update(vyapariRef, {
-        bakaya: parseFloat(calculatedVyapariNewBakaya.toFixed(2)),
-      });
-
-      // Commit the batch
-      await batch.commit();
-
-      setSubmitMessage({
-        type: "success",
-        text: "Transaction recorded and balances updated successfully!",
-      });
-
-      // Clear form fields after successful submission
-      setSelectedKisanId("");
-      setSelectedVyapariId("");
-      setTransactionDate(new Date().toISOString().split("T")[0]);
-      setTransactionItems([]);
-      setNotes("");
-      setAmountPaidKisan(0);
-      setAmountPaidVyapari(0);
-      setKisanBakaya(null);
-      setVyapariBakaya(null);
-
-      // Re-fetch data to reflect updated bakayas in dropdowns if needed, or simply redirect
-      setTimeout(() => {
-        router.push("/dashboard/transactions");
-      }, 2000);
+      setFormItems([]);
+      router.push("/dashboard/transactions"); // Redirect to transactions list
     } catch (err: any) {
-      console.error("Error recording transaction or updating balances:", err);
-      setSubmitMessage({
-        type: "error",
-        text: `Failed to record transaction or update balances: ${
-          err.message || "An unknown error occurred."
-        }`,
-      });
+      console.error("Error adding transaction:", err);
+      setError(`Failed to add transaction: ${err.message}`);
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  // --- Render Logic ---
   if (isLoading) {
     return (
-      <div className="container mx-auto p-4">
-        <h1 className="text-2xl font-bold mb-4">Transactions</h1>
-        <p>Loading essential data...</p>
+      <div className="container mx-auto p-4 flex justify-center items-center h-full">
+        <p className="text-xl text-gray-700">Loading data...</p>
       </div>
     );
   }
 
-  if (error) {
+  if (error && !successMessage) {
     return (
       <div className="container mx-auto p-4 text-red-600">
         <h1 className="text-2xl font-bold mb-4">Error</h1>
         <p>{error}</p>
-        <p>Please try refreshing the page.</p>
+        <button
+          onClick={() => window.location.reload()} // Simple reload to re-fetch
+          className="mt-4 px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600"
+        >
+          Try Again
+        </button>
       </div>
     );
   }
 
-  const isDataReady = systemSettings !== null;
-
   return (
     <div className="container mx-auto p-4">
-      <h1 className="text-2xl font-bold mb-6 text-gray-800">
+      <h1 className="text-3xl font-bold text-gray-800 mb-6">
         Record New Transaction
       </h1>
 
-      <form onSubmit={handleSubmit} className="space-y-6">
-        {/* Submission Message Display */}
-        {submitMessage && (
-          <div
-            className={`p-3 rounded-md mb-4 ${
-              submitMessage.type === "success"
-                ? "bg-green-100 text-green-800"
-                : "bg-red-100 text-red-800"
-            }`}
+      {successMessage && (
+        <div
+          className="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded relative mb-4"
+          role="alert"
+        >
+          <strong className="font-bold">Success!</strong>
+          <span className="block sm:inline"> {successMessage}</span>
+          <span
+            className="absolute top-0 bottom-0 right-0 px-4 py-3"
+            onClick={() => setSuccessMessage(null)}
           >
-            {submitMessage.text}
-          </div>
-        )}
-
-        {/* Transaction Details Section */}
-        <div className="bg-white shadow-md rounded-lg p-6">
-          <h2 className="text-xl font-semibold mb-4 text-gray-700">
-            Transaction Details
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Transaction Date */}
-            <div>
-              <label
-                htmlFor="transactionDate"
-                className="block text-sm font-medium text-gray-700"
-              >
-                Date
-              </label>
-              <input
-                type="date"
-                id="transactionDate"
-                value={transactionDate}
-                onChange={(e) => setTransactionDate(e.target.value)}
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 p-2 border"
-                required
-                disabled={isSubmitting}
-              />
-            </div>
-
-            {/* Mandi Region Display */}
-            <div>
-              <label
-                htmlFor="mandiRegion"
-                className="block text-sm font-medium text-gray-700"
-              >
-                Mandi Region
-              </label>
-              <input
-                type="text"
-                id="mandiRegion"
-                value={mandiRegion} // Use the new mandiRegion state
-                onChange={(e) => setMandiRegion(e.target.value)} // Allow user to edit if needed
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border bg-gray-50"
-                readOnly={!mandiRegion || mandiRegion === 'N/A'} // Make readOnly if not set or N/A
-                disabled={isSubmitting}
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* The rest of your form components (Kisan Selection, Vyapari Selection, Items, etc.) */}
-        {/* ... (no changes needed in the following sections for this particular request) ... */}
-
-        {/* Kisan Selection with Add New Button & Bakaya */}
-        <div className="bg-white shadow-md rounded-lg p-6">
-          <label
-            htmlFor="kisanSelect"
-            className="block text-sm font-medium text-gray-700"
-          >
-            Kisan (Seller)
-          </label>
-          <div className="flex items-center space-x-2">
-            <select
-              id="kisanSelect"
-              value={selectedKisanId}
-              onChange={(e) => setSelectedKisanId(e.target.value)}
-              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 p-2 border"
-              required
-              disabled={isSubmitting}
+            <svg
+              className="fill-current h-6 w-6 text-green-500"
+              role="button"
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 20 20"
             >
-              <option value="">Select a Kisan</option>
+              <title>Close</title>
+              <path d="M14.348 14.849a1.2 1.2 0 0 1-1.697 0L10 11.819l-2.651 3.029a1.2 1.2 0 1 1-1.697-1.697l2.758-3.15-2.759-3.152a1.2 1.2 0 1 1 1.697-1.697L10 8.183l2.651-3.031a1.2 1.2 0 1 1 1.697 1.697l-2.758 3.152 2.758 3.15a1.2 1.2 0 0 1 0 1.698z" />
+            </svg>
+          </span>
+        </div>
+      )}
+
+      {error && (
+        <div
+          className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4"
+          role="alert"
+        >
+          <strong className="font-bold">Error!</strong>
+          <span className="block sm:inline"> {error}</span>
+          <span
+            className="absolute top-0 bottom-0 right-0 px-4 py-3"
+            onClick={() => setError(null)}
+          >
+            <svg
+              className="fill-current h-6 w-6 text-red-500"
+              role="button"
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 20 20"
+            >
+              <title>Close</title>
+              <path d="M14.348 14.849a1.2 1.2 0 0 1-1.697 0L10 11.819l-2.651 3.029a1.2 1.2 0 1 1-1.697-1.697l2.758-3.15-2.759-3.152a1.2 1.2 0 1 1 1.697-1.697L10 8.183l2.651-3.031a1.2 1.2 0 1 1 1.697 1.697l-2.758 3.152 2.758 3.15a1.2 1.2 0 0 1 0 1.698z" />
+            </svg>
+          </span>
+        </div>
+      )}
+
+      <form onSubmit={handleSubmit} className="bg-white p-6 rounded-lg shadow-md">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+          {/* Transaction Date */}
+          <div>
+            <label
+              htmlFor="transactionDate"
+              className="block text-sm font-medium text-gray-700"
+            >
+              Transaction Date
+            </label>
+            <input
+              type="date"
+              id="transactionDate"
+              name="transactionDate"
+              value={formData.transactionDate}
+              onChange={handleFormChange}
+              required
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border"
+            />
+          </div>
+
+          {/* Kisan Select */}
+          <div>
+            <label
+              htmlFor="kisanRef"
+              className="block text-sm font-medium text-gray-700"
+            >
+              Select Kisan
+            </label>
+            <select
+              id="kisanRef"
+              name="kisanRef"
+              value={formData.kisanRef}
+              onChange={handleFormChange}
+              required
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border bg-white"
+            >
+              <option value="">-- Select Kisan --</option>
               {kisans.map((kisan) => (
                 <option key={kisan.id} value={kisan.id}>
-                  {kisan.name} {kisan.village ? `(${kisan.village})` : ""}
+                  {kisan.name} ({kisan.village || "N/A"})
                 </option>
               ))}
             </select>
-            <button
-              type="button"
-              onClick={() => setShowAddKisanModal(true)}
-              className="mt-1 px-3 py-2 bg-blue-500 text-white text-sm font-medium rounded-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50"
-              disabled={isSubmitting}
-            >
-                  + Add New
-                </button>
-              </div>
-              {selectedKisanId && kisanBakaya !== null && (
-                <p
-                  className={`text-sm mt-1 ${
-                    kisanBakaya < 0 ? "text-green-600" : "text-red-600"
-                  }`}
-                >
-                  Current Bakaya: ₹{kisanBakaya.toFixed(2)}{" "}
-                  {kisanBakaya < 0
-                    ? "(Market owes Kisan)"
-                    : "(Kisan owes Market)"}
-                </p>
-              )}
-              {kisans.length === 0 && (
-                <p className="text-sm text-gray-500 mt-1">
-                  No Kisans found. Add one now!
-                </p>
-              )}
-            </div>
+          </div>
 
-            {/* Vyapari Selection with Add New Button & Bakaya */}
-            <div className="bg-white shadow-md rounded-lg p-6">
-              <label
-                htmlFor="vyapariSelect"
-                className="block text-sm font-medium text-gray-700"
-              >
-                Vyapari (Buyer)
-              </label>
-              <div className="flex items-center space-x-2">
-                <select
-                  id="vyapariSelect"
-                  value={selectedVyapariId}
-                  onChange={(e) => setSelectedVyapariId(e.target.value)}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 p-2 border"
-                  required
-                  disabled={isSubmitting}
+          {/* Vyapari Select */}
+          <div>
+            <label
+              htmlFor="vyapariRef"
+              className="block text-sm font-medium text-gray-700"
+            >
+              Select Vyapari
+            </label>
+            <select
+              id="vyapariRef"
+              name="vyapariRef"
+              value={formData.vyapariRef}
+              onChange={handleFormChange}
+              required
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border bg-white"
+            >
+              <option value="">-- Select Vyapari --</option>
+              {vyaparis.map((vyapari) => (
+                <option key={vyapari.id} value={vyapari.id}>
+                  {vyapari.name} ({vyapari.city || "N/A"})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Transaction Type */}
+          <div>
+            <label
+              htmlFor="transactionType"
+              className="block text-sm font-medium text-gray-700"
+            >
+              Transaction Type
+            </label>
+            <select
+              id="transactionType"
+              name="transactionType"
+              value={formData.transactionType}
+              onChange={handleFormChange}
+              required
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border bg-white"
+            >
+              <option value="sale_to_vyapari">Sale to Vyapari</option>
+              <option value="purchase_from_kisan">Purchase from Kisan</option>
+              <option value="return_vyapari">Return from Vyapari</option>
+              <option value="return_kisan">Return to Kisan</option>
+            </select>
+          </div>
+
+          {/* Mandi Region */}
+          <div>
+            <label
+              htmlFor="mandiRegion"
+              className="block text-sm font-medium text-gray-700"
+            >
+              Mandi Region
+            </label>
+            <input
+              type="text"
+              id="mandiRegion"
+              name="mandiRegion"
+              value={formData.mandiRegion}
+              onChange={handleFormChange}
+              required
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border"
+            />
+          </div>
+        </div>
+
+        {/* Transaction Items Section */}
+        <div className="mb-6">
+          <h2 className="text-xl font-semibold text-gray-700 mb-4">
+            Transaction Items
+          </h2>
+          {formItems.length === 0 && (
+            <p className="text-gray-500 mb-4">No items added yet.</p>
+          )}
+          {formItems.map((item) => (
+            <div
+              key={item.tempId}
+              className="grid grid-cols-1 md:grid-cols-6 gap-4 bg-gray-50 p-4 rounded-md mb-4 items-end"
+            >
+              {/* Product Select */}
+              <div className="md:col-span-2">
+                <label
+                  htmlFor={`productId-${item.tempId}`}
+                  className="block text-sm font-medium text-gray-700"
                 >
-                  <option value="">Select a Vyapari</option>
-                  {vyaparis.map((vyapari) => (
-                    <option key={vyapari.id} value={vyapari.id}>
-                      {vyapari.name} {vyapari.city ? `(${vyapari.city})` : ""}
+                  Product
+                </label>
+                <select
+                  id={`productId-${item.tempId}`}
+                  name="productId" // This should be productId
+                  value={item.productId}
+                  onChange={(e) => handleItemChange(item.tempId, e)}
+                  required
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border bg-white"
+                >
+                  <option value="">-- Select Product --</option>
+                  {products.map((product) => (
+                    <option key={product.id} value={product.id}>
+                      {product.name}
                     </option>
                   ))}
                 </select>
+              </div>
+
+              {/* Quantity */}
+              <div>
+                <label
+                  htmlFor={`quantity-${item.tempId}`}
+                  className="block text-sm font-medium text-gray-700"
+                >
+                  Quantity (Kg)
+                </label>
+                <input
+                  type="number"
+                  id={`quantity-${item.tempId}`}
+                  name="quantity"
+                  value={item.quantity}
+                  onChange={(e) => handleItemChange(item.tempId, e)}
+                  min="0"
+                  step="0.01"
+                  required
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border"
+                />
+              </div>
+
+              {/* Unit Price */}
+              <div>
+                <label
+                  htmlFor={`unitPrice-${item.tempId}`}
+                  className="block text-sm font-medium text-gray-700"
+                >
+                  Unit Price (₹/Kg)
+                </label>
+                <input
+                  type="number"
+                  id={`unitPrice-${item.tempId}`}
+                  name="unitPrice"
+                  value={item.unitPrice}
+                  onChange={(e) => handleItemChange(item.tempId, e)}
+                  min="0"
+                  step="0.01"
+                  required
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border"
+                />
+              </div>
+
+              {/* Total Price */}
+              <div className="md:col-span-1">
+                <label
+                  htmlFor={`totalPrice-${item.tempId}`}
+                  className="block text-sm font-medium text-gray-700"
+                >
+                  Total Price
+                </label>
+                <input
+                  type="text"
+                  id={`totalPrice-${item.tempId}`}
+                  name="totalPrice"
+                  value={item.totalPrice.toFixed(2)}
+                  readOnly
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border bg-gray-100 cursor-not-allowed"
+                />
+              </div>
+
+              {/* Remove Button */}
+              <div className="md:col-span-1 flex justify-end items-center">
                 <button
                   type="button"
-                  onClick={() => setShowAddVyapariModal(true)}
-                  className="mt-1 px-3 py-2 bg-blue-500 text-white text-sm font-medium rounded-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50"
-                  disabled={isSubmitting}
+                  onClick={() => handleRemoveItem(item.tempId)}
+                  className="px-3 py-2 bg-red-500 text-white rounded-md hover:bg-red-600"
                 >
-                  + Add New
+                  Remove
                 </button>
               </div>
-              {selectedVyapariId && vyapariBakaya !== null && (
-                <p
-                  className={`text-sm mt-1 ${
-                    vyapariBakaya < 0 ? "text-green-600" : "text-red-600"
-                  }`}
-                >
-                  Current Bakaya: ₹{vyapariBakaya.toFixed(2)}{" "}
-                  {vyapariBakaya < 0
-                    ? "(Vyapari owes Market)"
-                    : "(Market owes Vyapari)"}
-                </p>
-              )}
-              {vyaparis.length === 0 && (
-                <p className="text-sm text-gray-500 mt-1">
-                  No Vyaparis found. Add one now!
-                </p>
-              )}
             </div>
+          ))}
+          <button
+            type="button"
+            onClick={handleAddItem}
+            className="px-4 py-2 bg-blue-600 text-white font-semibold rounded-md shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+          >
+            Add Item
+          </button>
+        </div>
 
-            {/* --- Transaction Items Section --- */}
-            <div className="bg-white shadow-md rounded-lg p-6">
-              <h2 className="text-xl font-semibold mb-4 text-gray-700">
-                Items
-              </h2>
-
-              {/* General "No Products" message with Add Product button */}
-              {products.length === 0 && (
-                <p className="text-sm text-red-500 mb-4 flex items-center">
-                  No Products found. Please add products to record transactions.
-                  <button
-                    type="button"
-                    onClick={() => setShowAddProductModal(true)}
-                    className="ml-2 px-3 py-1 bg-green-500 text-white text-xs font-medium rounded-md hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:opacity-50"
-                    disabled={isSubmitting}
-                  >
-                    + Add Product Now
-                  </button>
-                </p>
-              )}
-
-              {transactionItems.map((item, index) => (
-                <div
-                  key={item.tempId}
-                  className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end mb-4 p-4 border rounded-md relative"
-                >
-                  <div className="md:col-span-2">
-                    <label
-                      htmlFor={`product-${item.tempId}`}
-                      className="block text-sm font-medium text-gray-700"
-                    >
-                      Product
-                    </label>
-                    <div className="flex items-center space-x-2">
-                      <select
-                        id={`product-${item.tempId}`}
-                        value={item.productRef}
-                        onChange={(e) =>
-                          handleUpdateItem(index, "productRef", e.target.value)
-                        }
-                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 p-2 border"
-                        required
-                        disabled={isSubmitting}
-                      >
-                        <option value="">Select Product</option>
-                        {products.map((product) => (
-                          <option key={product.id} value={product.id}>
-                            {product.name}
-                          </option>
-                        ))}
-                      </select>
-                      <button
-                        type="button"
-                        onClick={() => setShowAddProductModal(true)}
-                        className="mt-1 px-3 py-2 bg-blue-500 text-white text-sm font-medium rounded-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50"
-                        disabled={isSubmitting}
-                      >
-                        +
-                      </button>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label
-                      htmlFor={`quantity-${item.tempId}`}
-                      className="block text-sm font-medium text-gray-700"
-                    >
-                      Quantity (KG)
-                    </label>
-                    <input
-                      type="number"
-                      id={`quantity-${item.tempId}`}
-                      value={item.quantity === 0 ? "" : item.quantity}
-                      onChange={(e) =>
-                        handleUpdateItem(index, "quantity", e.target.value)
-                      }
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 p-2 border"
-                      min="0"
-                      step="0.01"
-                      required
-                      disabled={isSubmitting}
-                    />
-                  </div>
-
-                  <div>
-                    <label
-                      htmlFor={`unitPrice-${item.tempId}`}
-                      className="block text-sm font-medium text-gray-700"
-                    >
-                      Unit Price (₹/KG)
-                    </label>
-                    <input
-                      type="number"
-                      id={`unitPrice-${item.tempId}`}
-                      value={item.unitPrice === 0 ? "" : item.unitPrice}
-                      onChange={(e) =>
-                        handleUpdateItem(index, "unitPrice", e.target.value)
-                      }
-                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 p-2 border"
-                      min="0"
-                      step="0.01"
-                      required
-                      disabled={isSubmitting}
-                    />
-                  </div>
-
-                  <div className="text-right">
-                    <label className="block text-sm font-medium text-gray-700">
-                      Total
-                    </label>
-                    <p className="mt-1 text-lg font-semibold text-gray-900">
-                      ₹{item.totalPrice.toFixed(2)}
-                    </p>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveItem(item.tempId)}
-                    className="absolute top-2 right-2 text-red-500 hover:text-red-700 font-bold"
-                    aria-label="Remove item"
-                    disabled={isSubmitting}
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-
-              <button
-                type="button"
-                onClick={handleAddItem}
-                className="mt-4 bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50"
-                disabled={isSubmitting}
-              >
-                + Add Item
-              </button>
-
-              {/* Totals Summary */}
-              <div className="mt-6 border-t pt-4">
-                <div className="flex justify-between items-center mb-2">
-                  <span className="text-lg font-medium text-gray-700">
-                    Sub Total:
-                  </span>
-                  <span className="text-lg font-semibold text-gray-900">
-                    ₹{subTotal.toFixed(2)}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center mb-2">
-                  <span className="text-lg font-medium text-gray-700">
-                    Total Weight (Kg):
-                  </span>
-                  <span className="text-lg font-semibold text-gray-900">
-                    {totalWeightInKg.toFixed(2)} Kg
-                  </span>
-                </div>
-
-                {/* Commissions and Net Amounts Display */}
-                {systemSettings && (
-                  <div className="mt-4 border-t pt-4">
-                    <h3 className="text-lg font-semibold mb-2">Calculations</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
-                      <div className="flex justify-between">
-                        <span>
-                          Kisan Commission (
-                          {systemSettings.commissionKisanRate * 100}%):
-                        </span>
-                        <span className="font-medium">
-                          ₹{displayCommissionKisanAmount.toFixed(2)}
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>
-                          Vyapari Commission (₹
-                          {systemSettings.commissionVyapariRatePerKg.toFixed(2)}
-                          /Kg):
-                        </span>
-                        <span className="font-medium">
-                          ₹{displayCommissionVyapariAmount.toFixed(2)}
-                        </span>
-                      </div>
-                      <div className="flex justify-between font-bold text-base mt-2 pt-2 border-t">
-                        <span>Total Commission:</span>
-                        <span>₹{displayTotalCommission.toFixed(2)}</span>
-                      </div>
-                    </div>
-
-                    <div className="mt-4 border-t pt-4">
-                      <div className="flex justify-between items-center mb-2 text-lg font-bold">
-                        <span>Net Amount to Kisan:</span>
-                        <span className="text-green-700">
-                          ₹{displayNetAmountKisan.toFixed(2)}
-                        </span>
-                      </div>
-                      <div className="flex justify-between items-center text-lg font-bold">
-                        <span>Net Amount from Vyapari:</span>
-                        <span className="text-blue-700">
-                          ₹{displayNetAmountVyapari.toFixed(2)}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Amount Paid and Bakaya Section */}
-            {(selectedKisanId || selectedVyapariId) && ( // Only show if at least one is selected
-              <div className="bg-white shadow-md rounded-lg p-6">
-                <h2 className="text-xl font-semibold mb-4 text-gray-700">
-                  Payment & Bakaya Information
-                </h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* Kisan Payment */}
-                  {selectedKisanId && kisanBakaya !== null && (
-                    <div>
-                      <label
-                        htmlFor="amountPaidKisan"
-                        className="block text-sm font-medium text-gray-700"
-                      >
-                        Amount Paid to Kisan (₹)
-                        <span className="text-xs text-gray-500 ml-1">
-                          (Optional)
-                        </span>
-                      </label>
-                      <input
-                        type="number"
-                        id="amountPaidKisan"
-                        value={amountPaidKisan === 0 ? "" : amountPaidKisan}
-                        onChange={(e) =>
-                          setAmountPaidKisan(parseFloat(e.target.value) || 0)
-                        }
-                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 p-2 border"
-                        min="0"
-                        step="0.01"
-                        disabled={isSubmitting}
-                      />
-                      <p className="text-sm mt-1">
-                        New Kisan Bakaya:{" "}
-                        <span
-                          className={`font-semibold ${
-                            parseFloat(newKisanBakaya || "0") < 0
-                              ? "text-green-600"
-                              : "text-red-600"
-                          }`}
-                        >
-                          ₹{newKisanBakaya || "0.00"}{" "}
-                          {parseFloat(newKisanBakaya || "0") < 0
-                            ? "(Market will owe Kisan)"
-                            : "(Kisan will owe Market)"}
-                        </span>
-                      </p>
-                    </div>
-                  )}
-
-                  {/* Vyapari Payment */}
-                  {selectedVyapariId && vyapariBakaya !== null && (
-                    <div>
-                      <label
-                        htmlFor="amountPaidVyapari"
-                        className="block text-sm font-medium text-gray-700"
-                      >
-                        Amount Collected from Vyapari (₹)
-                        <span className="text-xs text-gray-500 ml-1">
-                          (Optional)
-                        </span>
-                      </label>
-                      <input
-                        type="number"
-                        id="amountPaidVyapari"
-                        value={amountPaidVyapari === 0 ? "" : amountPaidVyapari}
-                        onChange={(e) =>
-                          setAmountPaidVyapari(parseFloat(e.target.value) || 0)
-                        }
-                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 p-2 border"
-                        min="0"
-                        step="0.01"
-                        disabled={isSubmitting}
-                      />
-                      <p className="text-sm mt-1">
-                        New Vyapari Bakaya:{" "}
-                        <span
-                          className={`font-semibold ${
-                            parseFloat(newVyapariBakaya || "0") < 0
-                              ? "text-green-600"
-                              : "text-red-600"
-                          }`}
-                        >
-                          ₹{newVyapariBakaya || "0.00"}{" "}
-                          {parseFloat(newVyapariBakaya || "0") < 0
-                            ? "(Market will owe Vyapari)"
-                            : "(Vyapari will owe Market)"}
-                        </span>
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Notes Section */}
-            <div className="bg-white shadow-md rounded-lg p-6">
+        {/* Financial Summary */}
+        <div className="bg-gray-50 p-6 rounded-lg shadow-inner mb-6">
+          <h2 className="text-xl font-semibold text-gray-700 mb-4">
+            Financial Summary
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <p>
+              <strong>SubTotal (Total Value of Goods):</strong> ₹
+              {subTotal.toFixed(2)}
+            </p>
+            <p>
+              <strong>Total Weight:</strong> {totalWeightInKg.toFixed(2)} Kg
+            </p>
+            <div>
               <label
-                htmlFor="notes"
+                htmlFor="commissionKisanRate"
                 className="block text-sm font-medium text-gray-700"
               >
-                Notes (Optional)
+                Kisan Commission Rate (%)
               </label>
-              <textarea
-                id="notes"
-                rows={3}
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 p-2 border"
-                placeholder="Any additional notes for this transaction..."
-                disabled={isSubmitting}
-              ></textarea>
+              <input
+                type="number"
+                id="commissionKisanRate"
+                name="commissionKisanRate"
+                value={formData.commissionKisanRate}
+                onChange={handleFormChange}
+                min="0"
+                step="0.01"
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border"
+              />
+              <p className="text-sm text-gray-600">
+                Commission Amount: ₹{commissionKisanAmount.toFixed(2)}
+              </p>
             </div>
-
-            {/* Submit Button */}
-            <div className="mt-8">
-              <button
-                type="submit"
-                className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:opacity-50"
-                disabled={
-                  !selectedKisanId ||
-                  !selectedVyapariId ||
-                  transactionItems.length === 0 ||
-                  transactionItems.some(
-                    (item) =>
-                      !item.productRef ||
-                      item.quantity <= 0 ||
-                      item.unitPrice <= 0
-                  ) ||
-                  !isDataReady || // Ensure settings are loaded
-                  isSubmitting
-                }
+            <div>
+              <label
+                htmlFor="commissionVyapariRatePerKg"
+                className="block text-sm font-medium text-gray-700"
               >
-                {isSubmitting
-                  ? "Recording & Updating Balances..."
-                  : "Record Transaction & Update Balances"}
-              </button>
+                Vyapari Commission Rate (₹/Kg)
+              </label>
+              <input
+                type="number"
+                id="commissionVyapariRatePerKg"
+                name="commissionVyapariRatePerKg"
+                value={formData.commissionVyapariRatePerKg}
+                onChange={handleFormChange}
+                min="0"
+                step="0.01"
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border"
+              />
+              <p className="text-sm text-gray-600">
+                Commission Amount: ₹{commissionVyapariAmount.toFixed(2)}
+              </p>
             </div>
-          </form>
+            <p className="md:col-span-2 text-lg font-bold">
+              Total Commission: ₹{totalCommission.toFixed(2)}
+            </p>
+            <p className="md:col-span-2 text-lg font-bold">
+              Net Amount Payable to Kisan: ₹{netAmountKisan.toFixed(2)}
+            </p>
+            <p className="md:col-span-2 text-lg font-bold">
+              Net Amount Receivable from Vyapari: ₹{netAmountVyapari.toFixed(2)}
+            </p>
 
-          {/* Quick Add Modals (remain unchanged) */}
-          <Modal
-            isOpen={showAddKisanModal}
-            onClose={handleCancelAddKisan}
-            title="Add New Kisan"
-          >
-            <AddKisanQuickForm
-              onSuccess={handleKisanAdded}
-              onCancel={handleCancelAddKisan}
-            />
-          </Modal>
-
-          <Modal
-            isOpen={showAddVyapariModal}
-            onClose={handleCancelAddVyapari}
-            title="Add New Vyapari"
-          >
-            <AddVyapariQuickForm
-              onSuccess={handleVyapariAdded}
-              onCancel={handleCancelAddVyapari}
-            />
-          </Modal>
-
-          <Modal
-            isOpen={showAddProductModal}
-            onClose={handleCancelAddProduct}
-            title="Add New Product"
-          >
-            <AddProductQuickForm
-              onSuccess={handleProductAdded}
-              onCancel={handleCancelAddProduct}
-            />
-          </Modal>
+            {/* Amount Paid/Collected at transaction time */}
+            <div>
+              <label
+                htmlFor="amountPaidKisan"
+                className="block text-sm font-medium text-gray-700"
+              >
+                Cash Paid to Kisan (at transaction)
+              </label>
+              <input
+                type="number"
+                id="amountPaidKisan"
+                name="amountPaidKisan"
+                value={formData.amountPaidKisan}
+                onChange={handleFormChange}
+                min="0"
+                step="0.01"
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border"
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="amountPaidVyapari"
+                className="block text-sm font-medium text-gray-700"
+              >
+                Cash Collected from Vyapari (at transaction)
+              </label>
+              <input
+                type="number"
+                id="amountPaidVyapari"
+                name="amountPaidVyapari"
+                value={formData.amountPaidVyapari}
+                onChange={handleFormChange}
+                min="0"
+                step="0.01"
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border"
+              />
+            </div>
+          </div>
         </div>
-      );
-    }
+
+        {/* Notes/Remarks */}
+        <div className="mb-6">
+          <label
+            htmlFor="notes"
+            className="block text-sm font-medium text-gray-700"
+          >
+            Notes/Remarks
+          </label>
+          <textarea
+            id="notes"
+            name="notes"
+            value={formData.notes}
+            onChange={handleFormChange}
+            rows={3}
+            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border"
+          ></textarea>
+        </div>
+
+        {/* Submit Button */}
+        <div className="flex justify-end">
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            className={`px-6 py-3 font-semibold rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 ${
+              isSubmitting
+                ? "bg-gray-400 cursor-not-allowed"
+                : "bg-indigo-600 text-white hover:bg-indigo-700 focus:ring-indigo-500"
+            }`}
+          >
+            {isSubmitting ? "Recording Transaction..." : "Record Transaction"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}

@@ -57,6 +57,29 @@ export default function VyapariDetailsPage({ params }: VyapariDetailsPageProps) 
     try {
       setIsLoading(true);
       setError(null);
+
+      // Handle "new" Vyapari creation
+      if (vyapariId === "new") {
+        setVyapari(null); // No existing vyapari
+        setIsLoading(false);
+        setIsEditing(true); // Automatically go into edit mode for new vyapari
+        // Reset/clear all form states for a new entry
+        setName("");
+        setContactNumber("");
+        setWhatsappNumber("");
+        setIsWhatsappSameAsMobile(false); // Default to false for new
+        setAlternateContactNumber("");
+        setVillage("");
+        setAddress("");
+        setCity("");
+        setPincode("");
+        setDistrict("");
+        setState("");
+        setGstNumber("");
+        setCropsBought("");
+        return; // Exit early as no fetch is needed
+      }
+
       const fetchedVyapari = await firestoreService.getVyapariById(vyapariId);
       if (fetchedVyapari) {
         setVyapari(fetchedVyapari);
@@ -147,39 +170,68 @@ export default function VyapariDetailsPage({ params }: VyapariDetailsPageProps) 
     }
     // --- End Validation ---
 
-    if (vyapari) {
-      try {
-        const updatedVyapari: Partial<Omit<Vyapari, "id" | "createdAt">> = {
+    try {
+      const authInstance = getAuth();
+      const currentUser = authInstance.currentUser;
+
+      if (!currentUser) {
+        setSubmitMessage({ type: "error", text: "You must be logged in to save Vyapari data." });
+        setIsSubmitting(false);
+        return;
+      }
+
+      const vyapariDataToSave: Omit<Vyapari, "id" | "createdAt" | "updatedAt" | "bakaya" | "lastTransactionDate"> = {
+        name: name.trim(),
+        contactNumber: contactNumber.trim() === "" ? null : contactNumber.trim(),
+        whatsappNumber: isWhatsappSameAsMobile ? (contactNumber.trim() === "" ? null : contactNumber.trim()) : (whatsappNumber.trim() === "" ? null : whatsappNumber.trim()),
+        alternateContactNumber: alternateContactNumber.trim() === "" ? null : alternateContactNumber.trim(),
+        village: village.trim() === "" ? null : village.trim(),
+        address: address.trim() === "" ? null : address.trim(),
+        city: city.trim(),
+        pincode: pincode.trim() === "" ? null : pincode.trim(),
+        district: district.trim() === "" ? null : district.trim(),
+        state: state.trim() === "" ? null : state.trim(),
+        gstNumber: gstNumber.trim() === "" ? null : gstNumber.trim().toUpperCase(),
+        cropsBought: cropsBought.trim() === "" ? null : cropsBought.split(',').map(crop => crop.trim()).filter(crop => crop !== ''),
+        registeredByRef: currentUser.uid, // Set registeredByRef for new vyapari
+      };
+
+      if (vyapariId === "new") {
+        await firestoreService.addVyapari(vyapariDataToSave);
+        setSubmitMessage({ type: "success", text: "Vyapari added successfully!" });
+        router.push("/dashboard/vyaparis"); // Redirect to list after adding
+      } else if (vyapari) {
+        // For updates, we only send the partial data that can be updated
+        const updatedVyapariData: Partial<Omit<Vyapari, "id" | "createdAt">> = {
           name: name.trim(),
           contactNumber: contactNumber.trim() === "" ? null : contactNumber.trim(),
           whatsappNumber: isWhatsappSameAsMobile ? (contactNumber.trim() === "" ? null : contactNumber.trim()) : (whatsappNumber.trim() === "" ? null : whatsappNumber.trim()),
           alternateContactNumber: alternateContactNumber.trim() === "" ? null : alternateContactNumber.trim(),
           village: village.trim() === "" ? null : village.trim(),
           address: address.trim() === "" ? null : address.trim(),
-          city: city.trim(), // City is mandatory
+          city: city.trim(),
           pincode: pincode.trim() === "" ? null : pincode.trim(),
           district: district.trim() === "" ? null : district.trim(),
           state: state.trim() === "" ? null : state.trim(),
-          gstNumber: gstNumber.trim() === "" ? null : gstNumber.trim().toUpperCase(), // Store GST in uppercase
-          cropsBought: cropsBought.trim() === "" ? null : cropsBought.split(',').map(crop => crop.trim()).filter(crop => crop !== ''), // Convert string to array
-          // bakaya is updated via transactions or direct payments, not directly editable here
+          gstNumber: gstNumber.trim() === "" ? null : gstNumber.trim().toUpperCase(),
+          cropsBought: cropsBought.trim() === "" ? null : cropsBought.split(',').map(crop => crop.trim()).filter(crop => crop !== ''),
         };
-        await firestoreService.updateVyapari(vyapariId, updatedVyapari);
+        await firestoreService.updateVyapari(vyapariId, updatedVyapariData);
         setSubmitMessage({ type: "success", text: "Vyapari updated successfully!" });
         setIsEditing(false); // Exit editing mode
         fetchVyapari(); // Re-fetch updated data to show latest values
-        setTimeout(() => setSubmitMessage(null), 3000); // Clear message
-      } catch (err: any) {
-        console.error("Error updating Vyapari:", err);
-        setSubmitMessage({ type: "error", text: `Failed to update Vyapari: ${err.message || "An unknown error occurred."}` });
-      } finally {
-        setIsSubmitting(false);
       }
+      setTimeout(() => setSubmitMessage(null), 3000); // Clear message
+    } catch (err: any) {
+      console.error("Error saving Vyapari:", err);
+      setSubmitMessage({ type: "error", text: `Failed to save Vyapari: ${err.message || "An unknown error occurred."}` });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const handleDelete = async () => {
-    if (!vyapari) return;
+    if (!vyapari || vyapariId === "new") return; // Cannot delete a new/non-existent vyapari
 
     if (
       window.confirm(
@@ -280,7 +332,8 @@ export default function VyapariDetailsPage({ params }: VyapariDetailsPageProps) 
     );
   }
 
-  if (error) {
+  // Adjusted error handling: if it's a new vyapari, don't show "Vyapari not found" error
+  if (error && vyapariId !== "new") {
     return (
       <div className="container mx-auto p-4 text-red-600">
         <h1 className="text-2xl font-bold mb-4">Error</h1>
@@ -295,7 +348,8 @@ export default function VyapariDetailsPage({ params }: VyapariDetailsPageProps) 
     );
   }
 
-  if (!vyapari) {
+  // If not loading and not a new vyapari, and vyapari is null, then it's genuinely not found
+  if (!vyapari && vyapariId !== "new") {
     return (
       <div className="container mx-auto p-4 text-gray-700">
         <h1 className="text-2xl font-bold mb-4">Vyapari Not Found</h1>
@@ -313,7 +367,7 @@ export default function VyapariDetailsPage({ params }: VyapariDetailsPageProps) 
   return (
     <div className="container mx-auto p-4">
       <h1 className="text-2xl font-bold mb-6 text-gray-800">
-        {isEditing ? "Edit Vyapari" : "Vyapari Details"}
+        {vyapariId === "new" ? "Add New Vyapari" : (isEditing ? "Edit Vyapari" : "Vyapari Details")}
       </h1>
 
       {submitMessage && (
@@ -357,6 +411,7 @@ export default function VyapariDetailsPage({ params }: VyapariDetailsPageProps) 
               }
             }}
             onBlur={() => {
+              const mobileRegex = /^\d{10}$/; // Define regex locally for onBlur
               if (contactNumber.trim() && !mobileRegex.test(contactNumber.trim())) {
                 setSubmitMessage({ type: "error", text: "Contact Number must be exactly 10 digits." });
               } else {
@@ -401,6 +456,7 @@ export default function VyapariDetailsPage({ params }: VyapariDetailsPageProps) 
               }
             }}
             onBlur={() => {
+              const mobileRegex = /^\d{10}$/; // Define regex locally for onBlur
               if (!isWhatsappSameAsMobile && whatsappNumber.trim() && !mobileRegex.test(whatsappNumber.trim())) {
                 setSubmitMessage({ type: "error", text: "WhatsApp Number must be exactly 10 digits." });
               } else {
@@ -430,6 +486,7 @@ export default function VyapariDetailsPage({ params }: VyapariDetailsPageProps) 
               }
             }}
             onBlur={() => {
+              const mobileRegex = /^\d{10}$/; // Define regex locally for onBlur
               if (alternateContactNumber.trim() && !mobileRegex.test(alternateContactNumber.trim())) {
                 setSubmitMessage({ type: "error", text: "Alternate Contact Number must be exactly 10 digits." });
               } else {
@@ -545,6 +602,7 @@ export default function VyapariDetailsPage({ params }: VyapariDetailsPageProps) 
               }
             }}
             onBlur={() => {
+              const gstRegex = /^[0-9A-Za-z]{15}$/; // Define regex locally for onBlur
               if (gstNumber.trim() && !gstRegex.test(gstNumber.trim())) {
                 setSubmitMessage({ type: "error", text: "GST Number must be exactly 15 alphanumeric characters." });
               } else {
@@ -574,72 +632,31 @@ export default function VyapariDetailsPage({ params }: VyapariDetailsPageProps) 
           />
         </div>
 
-        {/* Display Bakaya */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700">
-            Outstanding Balance (Bakaya)
-          </label>
-          <p
-            className={`mt-1 text-lg font-semibold ${
-              vyapari.bakaya && vyapari.bakaya < 0 ? 'text-green-600' : 'text-red-600'
-            }`}
-          >
-            ₹{vyapari.bakaya?.toFixed(2) || '0.00'}
-          </p>
-          <p className="text-xs text-gray-500">
-            This balance updates automatically with transactions and payments.
-          </p>
-        </div>
+        {/* Display Bakaya - Only for existing Vyaparis */}
+        {vyapariId !== "new" && vyapari && (
+          <div>
+            <label className="block text-sm font-medium text-gray-700">
+              Outstanding Balance (Bakaya)
+            </label>
+            <p
+              className={`mt-1 text-lg font-semibold ${
+                vyapari.bakaya && vyapari.bakaya < 0 ? 'text-green-600' : 'text-red-600'
+              }`}
+            >
+              ₹{vyapari.bakaya?.toFixed(2) || '0.00'}
+            </p>
+            <p className="text-xs text-gray-500">
+              This balance updates automatically with transactions and payments.
+            </p>
+          </div>
+        )}
 
         <div className="flex justify-end space-x-4 mt-6">
-          {!isEditing ? (
+          {vyapariId === "new" ? (
             <>
               <button
                 type="button"
                 onClick={() => router.push("/dashboard/vyaparis")}
-                className="px-4 py-2 bg-gray-300 text-gray-800 font-semibold rounded-md hover:bg-gray-400"
-              >
-                Back to List
-              </button>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault(); // Prevent accidental form submission
-                  console.log("Edit Vyapari button clicked, setting isEditing to true");
-                  setIsEditing(true);
-                }}
-                className="px-4 py-2 bg-blue-600 text-white font-semibold rounded-md shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-              >
-                Edit Vyapari
-              </button>
-            </>
-          ) : (
-            <>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsEditing(false);
-                  // Reset form fields to original vyapari values on cancel
-                  if (vyapari) {
-                    setName(vyapari.name || "");
-                    setContactNumber(vyapari.contactNumber || "");
-                    setWhatsappNumber(vyapari.whatsappNumber || "");
-                    setAlternateContactNumber(vyapari.alternateContactNumber || "");
-                    setVillage(vyapari.village || "");
-                    setAddress(vyapari.address || "");
-                    setCity(vyapari.city || "");
-                    setPincode(vyapari.pincode || "");
-                    setDistrict(vyapari.district || "");
-                    setState(vyapari.state || "");
-                    setGstNumber(vyapari.gstNumber || "");
-                    setCropsBought(vyapari.cropsBought?.join(', ') || "");
-                    setIsWhatsappSameAsMobile(
-                      !!vyapari.contactNumber &&
-                      vyapari.contactNumber === vyapari.whatsappNumber
-                    );
-                  }
-                  setSubmitMessage(null); // Clear any messages
-                }}
                 className="px-4 py-2 bg-gray-300 text-gray-800 font-semibold rounded-md hover:bg-gray-400"
                 disabled={isSubmitting}
               >
@@ -650,31 +667,96 @@ export default function VyapariDetailsPage({ params }: VyapariDetailsPageProps) 
                 className="px-4 py-2 bg-green-600 text-white font-semibold rounded-md shadow-sm hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:opacity-50"
                 disabled={isSubmitting}
               >
-                {isSubmitting ? "Saving..." : "Save Changes"}
+                {isSubmitting ? "Adding..." : "Add Vyapari"}
               </button>
             </>
+          ) : (
+            // Existing vyapari view/edit buttons
+            !isEditing ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => router.push("/dashboard/vyaparis")}
+                  className="px-4 py-2 bg-gray-300 text-gray-800 font-semibold rounded-md hover:bg-gray-400"
+                >
+                  Back to List
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault(); // Prevent accidental form submission
+                    console.log("Edit Vyapari button clicked, setting isEditing to true");
+                    setIsEditing(true);
+                  }}
+                  className="px-4 py-2 bg-blue-600 text-white font-semibold rounded-md shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                >
+                  Edit Vyapari
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsEditing(false);
+                    // Reset form fields to original vyapari values on cancel
+                    if (vyapari) {
+                      setName(vyapari.name || "");
+                      setContactNumber(vyapari.contactNumber || "");
+                      setWhatsappNumber(vyapari.whatsappNumber || "");
+                      setAlternateContactNumber(vyapari.alternateContactNumber || "");
+                      setVillage(vyapari.village || "");
+                      setAddress(vyapari.address || "");
+                      setCity(vyapari.city || "");
+                      setPincode(vyapari.pincode || "");
+                      setDistrict(vyapari.district || "");
+                      setState(vyapari.state || "");
+                      setGstNumber(vyapari.gstNumber || "");
+                      setCropsBought(vyapari.cropsBought?.join(', ') || "");
+                      setIsWhatsappSameAsMobile(
+                        !!vyapari.contactNumber &&
+                        vyapari.contactNumber === vyapari.whatsappNumber
+                      );
+                    }
+                    setSubmitMessage(null); // Clear any messages
+                  }}
+                  className="px-4 py-2 bg-gray-300 text-gray-800 font-semibold rounded-md hover:bg-gray-400"
+                  disabled={isSubmitting}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-green-600 text-white font-semibold rounded-md shadow-sm hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:opacity-50"
+                  disabled={isSubmitting}
+                >
+                  {isSubmitting ? "Saving..." : "Save Changes"}
+                </button>
+              </>
+            )
           )}
         </div>
 
-        {/* Action Buttons: Record Payment & Delete */}
-        <div className="mt-8 pt-4 border-t border-gray-200 flex justify-between">
-            <button
-              type="button"
-              onClick={handleOpenPaymentModal}
-              className="px-4 py-2 bg-purple-600 text-white font-semibold rounded-md shadow-sm hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 disabled:opacity-50"
-              disabled={isSubmitting || isEditing} // Disable if editing or submitting main form
-            >
-              Record Payment
-            </button>
-            <button
-              type="button"
-              onClick={handleDelete}
-              className="px-4 py-2 bg-red-600 text-white font-semibold rounded-md shadow-sm hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:opacity-50"
-              disabled={isSubmitting || isEditing} // Disable if editing or submitting main form
-            >
-              Delete Vyapari
-            </button>
-        </div>
+        {vyapariId !== "new" && ( // Only show action buttons for existing vyaparis
+          <div className="mt-8 pt-4 border-t border-gray-200 flex justify-between">
+              <button
+                type="button"
+                onClick={handleOpenPaymentModal}
+                className="px-4 py-2 bg-purple-600 text-white font-semibold rounded-md shadow-sm hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 disabled:opacity-50"
+                disabled={isSubmitting || isEditing} // Disable if editing or submitting main form
+              >
+                Record Payment
+              </button>
+              <button
+                type="button"
+                onClick={handleDelete}
+                className="px-4 py-2 bg-red-600 text-white font-semibold rounded-md shadow-sm hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:opacity-50"
+                disabled={isSubmitting || isEditing} // Disable if editing or submitting main form
+              >
+                Delete Vyapari
+              </button>
+          </div>
+        )}
       </form>
 
       {/* Payment Modal */}

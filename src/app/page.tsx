@@ -1,51 +1,43 @@
 // src/app/page.tsx
-'use client'; // If not already there
+"use client";
 
-import { Button } from "@/components/ui/button"; // Assuming shadcn button
-import { authService } from "@/lib/authService";
-import { useAuthStore } from "@/store/authStore";
-import { useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { getAuth, onAuthStateChanged } from 'firebase/auth';
+import { app } from '@/lib/firebase/clientApp'; // Ensure your firebase app is initialized here
 
-export default function HomePage() {
-  const { user, loading, setUser, setLoading } = useAuthStore();
+export default function RootPage() {
   const router = useRouter();
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!user && !loading) {
-      console.log('[HomePage useEffect] User logged out, redirecting to /login');
-      router.replace('/login');
-    }
-  }, [user, loading, router]);
-
-  const handleLogout = async () => {
-    try {
-      await authService.logout();
-      setUser(null);
-      setLoading(false);
-      console.log('Logged out successfully, redirecting to /login');
-      router.replace('/login');
-    } catch (error: unknown) { // Explicitly cast to 'unknown' first
-      console.error("Logout failed:", error);
-      // Type guard to safely access the message property
-      if (error instanceof Error) {
-        alert("Logout failed: " + error.message); // Safely access error.message
+    const auth = getAuth(app);
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        // User is signed in, redirect to dashboard
+        router.replace('/dashboard');
       } else {
-        alert("Logout failed: An unexpected error occurred.");
+        // User is signed out, redirect to login
+        router.replace('/login');
       }
-    }
-  };
+      setLoading(false);
+    });
+
+    // Clean up the subscription on unmount
+    return () => unsubscribe();
+  }, [router]);
 
   if (loading) {
-    return <div>Loading user session...</div>;
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100 p-4">
+        <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-blue-500 mb-4"></div>
+        <p className="text-xl text-gray-700 font-semibold">Loading your Mandi App...</p>
+        <p className="text-gray-500 mt-2 text-sm">Please wait while we prepare your experience.</p>
+      </div>
+    );
   }
 
-  return (
-    <div className="flex flex-col items-center justify-center min-h-screen">
-      <p className="text-lg mb-4">
-        Hello Shadcn Button! You are logged in as {user?.email} (Role: {user?.role})
-      </p>
-      <Button onClick={handleLogout}>Log Out</Button>
-    </div>
-  );
+  // This component will only render "Loading..." briefly before redirecting.
+  // It won't display any permanent content.
+  return null;
 }

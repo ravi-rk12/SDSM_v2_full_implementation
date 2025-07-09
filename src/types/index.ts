@@ -167,6 +167,9 @@ export interface Transaction {
   updatedAt: Date | Timestamp;
   notes?: string; // General transaction remarks
 
+  // NEW: Denormalized product references for efficient querying
+  productRefs?: string[] | null;
+
   // Data Science Fields (not handled client-side for now)
   mandiRegion: string; // Pre-configured for the Mandi
   weatherConditionsAtTime?: string; // Auto-fetched from weather API
@@ -232,7 +235,7 @@ export interface Bill {
 
   previousBakayaAmount: number; // Outstanding balance at periodStart
   totalTransactionsAmount: number; // Sum of subTotals for transactions in period
-  totalPaymentsMadeForPeriod: number; // Sum of payments in period
+  totalPaymentsMadeForPeriod: number;
   totalCommissionKisan: number; // Sum of Kisan commission for transactions in period
   totalCommissionVyapari: number; // Sum of Vyapari commission for transactions in period
 
@@ -260,9 +263,9 @@ export interface ProductPriceHistoryEntry {
   kisanRef: string; // Kisan ID who sold at this price
   vyapariRef: string; // Vyapari ID who bought at this price
   mandiRegion: string; // Copied from transaction
-  weatherConditionsAtTime?: string; // Copied from transaction
-  temperatureCelsius?: number; // Copied from transaction
-  humidityPercent?: number; // Copied from transaction
+  weatherConditionsAtTime?: string;
+  temperatureCelsius?: number;
+  humidityPercent?: number;
   externalMarketPriceKg?: number; // For comparison
 }
 

@@ -30,7 +30,6 @@ export default function KisanDetailsPage({ params }: KisanDetailsPageProps) {
   const [alternateContactNumber, setAlternateContactNumber] = useState("");
   const [village, setVillage] = useState("");
   const [address, setAddress] = useState("");
-  // Removed landArea as per request
   const [cropsGrown, setCropsGrown] = useState(""); // Input as comma-separated string
   const [aadharNumber, setAadharNumber] = useState("");
 
@@ -50,6 +49,25 @@ export default function KisanDetailsPage({ params }: KisanDetailsPageProps) {
     try {
       setIsLoading(true);
       setError(null);
+
+      // Handle "new" Kisan creation
+      if (kisanId === "new") {
+        setKisan(null); // No existing kisan
+        setIsLoading(false);
+        setIsEditing(true); // Automatically go into edit mode for new kisan
+        // Reset/clear all form states for a new entry
+        setName("");
+        setContactNumber("");
+        setWhatsappNumber("");
+        setIsWhatsappSameAsMobile(false); // Default to false for new
+        setAlternateContactNumber("");
+        setVillage("");
+        setAddress("");
+        setCropsGrown("");
+        setAadharNumber("");
+        return; // Exit early as no fetch is needed
+      }
+
       const fetchedKisan = await firestoreService.getKisanById(kisanId);
       if (fetchedKisan) {
         setKisan(fetchedKisan);
@@ -60,7 +78,6 @@ export default function KisanDetailsPage({ params }: KisanDetailsPageProps) {
         setAlternateContactNumber(fetchedKisan.alternateContactNumber || "");
         setVillage(fetchedKisan.village || "");
         setAddress(fetchedKisan.address || "");
-        // Removed landArea from here as well
         setCropsGrown(fetchedKisan.cropsSold?.join(', ') || ""); // Use cropsSold from type
         setAadharNumber(fetchedKisan.aadhaarNumber || ""); // Use aadhaarNumber from type
 
@@ -130,39 +147,62 @@ export default function KisanDetailsPage({ params }: KisanDetailsPageProps) {
       setIsSubmitting(false);
       return;
     }
-    // Removed landArea validation
     // --- End Validation ---
 
-    if (kisan) {
-      try {
-        const updatedKisan: Partial<Omit<Kisan, "id" | "createdAt">> = {
+    try {
+      const authInstance = getAuth();
+      const currentUser = authInstance.currentUser;
+
+      if (!currentUser) {
+        setSubmitMessage({ type: "error", text: "You must be logged in to save Kisan data." });
+        setIsSubmitting(false);
+        return;
+      }
+
+      const kisanDataToSave: Omit<Kisan, "id" | "createdAt" | "updatedAt" | "bakaya" | "lastTransactionDate"> = {
+        name: name.trim(),
+        contactNumber: contactNumber.trim() === "" ? null : contactNumber.trim(),
+        whatsappNumber: isWhatsappSameAsMobile ? (contactNumber.trim() === "" ? null : contactNumber.trim()) : (whatsappNumber.trim() === "" ? null : whatsappNumber.trim()),
+        alternateContactNumber: alternateContactNumber.trim() === "" ? null : alternateContactNumber.trim(),
+        village: village.trim() === "" ? null : village.trim(),
+        address: address.trim() === "" ? null : address.trim(),
+        cropsSold: cropsGrown.trim() === "" ? null : cropsGrown.split(',').map(crop => crop.trim()).filter(crop => crop !== ''),
+        aadhaarNumber: aadharNumber.trim() === "" ? null : aadharNumber.trim(),
+        registeredByRef: currentUser.uid, // Set registeredByRef for new kisan
+      };
+
+      if (kisanId === "new") {
+        await firestoreService.addKisan(kisanDataToSave);
+        setSubmitMessage({ type: "success", text: "Kisan added successfully!" });
+        router.push("/dashboard/kisans"); // Redirect to list after adding
+      } else if (kisan) {
+        // For updates, we only send the partial data that can be updated
+        const updatedKisanData: Partial<Omit<Kisan, "id" | "createdAt">> = {
           name: name.trim(),
           contactNumber: contactNumber.trim() === "" ? null : contactNumber.trim(),
           whatsappNumber: isWhatsappSameAsMobile ? (contactNumber.trim() === "" ? null : contactNumber.trim()) : (whatsappNumber.trim() === "" ? null : whatsappNumber.trim()),
           alternateContactNumber: alternateContactNumber.trim() === "" ? null : alternateContactNumber.trim(),
           village: village.trim() === "" ? null : village.trim(),
           address: address.trim() === "" ? null : address.trim(),
-          // Removed landArea from here
-          cropsSold: cropsGrown.trim() === "" ? null : cropsGrown.split(',').map(crop => crop.trim()).filter(crop => crop !== ''), // Use cropsSold
-          aadhaarNumber: aadharNumber.trim() === "" ? null : aadharNumber.trim(), // Use aadhaarNumber
-          // bakaya is updated via transactions or direct payments, not directly editable here
+          cropsSold: cropsGrown.trim() === "" ? null : cropsGrown.split(',').map(crop => crop.trim()).filter(crop => crop !== ''),
+          aadhaarNumber: aadharNumber.trim() === "" ? null : aadharNumber.trim(),
         };
-        await firestoreService.updateKisan(kisanId, updatedKisan);
+        await firestoreService.updateKisan(kisanId, updatedKisanData);
         setSubmitMessage({ type: "success", text: "Kisan updated successfully!" });
         setIsEditing(false); // Exit editing mode
         fetchKisan(); // Re-fetch updated data to show latest values
-        setTimeout(() => setSubmitMessage(null), 3000); // Clear message
-      } catch (err: any) {
-        console.error("Error updating Kisan:", err);
-        setSubmitMessage({ type: "error", text: `Failed to update Kisan: ${err.message || "An unknown error occurred."}` });
-      } finally {
-        setIsSubmitting(false);
       }
+      setTimeout(() => setSubmitMessage(null), 3000); // Clear message
+    } catch (err: any) {
+      console.error("Error saving Kisan:", err);
+      setSubmitMessage({ type: "error", text: `Failed to save Kisan: ${err.message || "An unknown error occurred."}` });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const handleDelete = async () => {
-    if (!kisan) return;
+    if (!kisan || kisanId === "new") return; // Cannot delete a new/non-existent kisan
 
     if (
       window.confirm(
@@ -264,7 +304,8 @@ export default function KisanDetailsPage({ params }: KisanDetailsPageProps) {
     );
   }
 
-  if (error) {
+  // Adjusted error handling: if it's a new kisan, don't show "Kisan not found" error
+  if (error && kisanId !== "new") {
     return (
       <div className="container mx-auto p-4 text-red-600">
         <h1 className="text-2xl font-bold mb-4">Error</h1>
@@ -279,7 +320,8 @@ export default function KisanDetailsPage({ params }: KisanDetailsPageProps) {
     );
   }
 
-  if (!kisan) {
+  // If not loading and not a new kisan, and kisan is null, then it's genuinely not found
+  if (!kisan && kisanId !== "new") {
     return (
       <div className="container mx-auto p-4 text-gray-700">
         <h1 className="text-2xl font-bold mb-4">Kisan Not Found</h1>
@@ -297,7 +339,7 @@ export default function KisanDetailsPage({ params }: KisanDetailsPageProps) {
   return (
     <div className="container mx-auto p-4">
       <h1 className="text-2xl font-bold mb-6 text-gray-800">
-        {isEditing ? "Edit Kisan" : "Kisan Details"}
+        {kisanId === "new" ? "Add New Kisan" : (isEditing ? "Edit Kisan" : "Kisan Details")}
       </h1>
 
       {submitMessage && (
@@ -342,7 +384,8 @@ export default function KisanDetailsPage({ params }: KisanDetailsPageProps) {
               }
             }}
             onBlur={() => { // Add onBlur for immediate feedback
-              if (contactNumber.trim() && !/^\d{10}$/.test(contactNumber.trim())) {
+              const mobileRegex = /^\d{10}$/; // Define regex locally for onBlur
+              if (contactNumber.trim() && !mobileRegex.test(contactNumber.trim())) {
                 setSubmitMessage({ type: "error", text: "Contact Number must be exactly 10 digits." });
               } else {
                 setSubmitMessage(null); // Clear error if valid
@@ -386,7 +429,8 @@ export default function KisanDetailsPage({ params }: KisanDetailsPageProps) {
               }
             }}
             onBlur={() => {
-              if (!isWhatsappSameAsMobile && whatsappNumber.trim() && !/^\d{10}$/.test(whatsappNumber.trim())) {
+              const mobileRegex = /^\d{10}$/; // Define regex locally for onBlur
+              if (!isWhatsappSameAsMobile && whatsappNumber.trim() && !mobileRegex.test(whatsappNumber.trim())) {
                 setSubmitMessage({ type: "error", text: "WhatsApp Number must be exactly 10 digits." });
               } else {
                 setSubmitMessage(null);
@@ -415,7 +459,8 @@ export default function KisanDetailsPage({ params }: KisanDetailsPageProps) {
               }
             }}
             onBlur={() => {
-              if (alternateContactNumber.trim() && !/^\d{10}$/.test(alternateContactNumber.trim())) {
+              const mobileRegex = /^\d{10}$/; // Define regex locally for onBlur
+              if (alternateContactNumber.trim() && !mobileRegex.test(alternateContactNumber.trim())) {
                 setSubmitMessage({ type: "error", text: "Alternate Contact Number must be exactly 10 digits." });
               } else {
                 setSubmitMessage(null);
@@ -489,7 +534,8 @@ export default function KisanDetailsPage({ params }: KisanDetailsPageProps) {
               }
             }}
             onBlur={() => {
-              if (aadharNumber.trim() && !/^\d{12}$/.test(aadharNumber.trim())) {
+              const aadharRegex = /^\d{12}$/; // Define regex locally for onBlur
+              if (aadharNumber.trim() && !aadharRegex.test(aadharNumber.trim())) {
                 setSubmitMessage({ type: "error", text: "Aadhar Number must be exactly 12 digits." });
               } else {
                 setSubmitMessage(null);
@@ -502,69 +548,31 @@ export default function KisanDetailsPage({ params }: KisanDetailsPageProps) {
           />
         </div>
 
-        {/* Display Bakaya */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700">
-            Outstanding Balance (Bakaya)
-          </label>
-          <p
-            className={`mt-1 text-lg font-semibold ${
-              kisan.bakaya && kisan.bakaya < 0 ? 'text-green-600' : 'text-red-600'
-            }`}
-          >
-            ₹{kisan.bakaya?.toFixed(2) || '0.00'}
-          </p>
-          <p className="text-xs text-gray-500">
-            This balance updates automatically with transactions and payments.
-          </p>
-        </div>
+        {/* Display Bakaya - Only for existing Kisans */}
+        {kisanId !== "new" && kisan && (
+          <div>
+            <label className="block text-sm font-medium text-gray-700">
+              Outstanding Balance (Bakaya)
+            </label>
+            <p
+              className={`mt-1 text-lg font-semibold ${
+                kisan.bakaya && kisan.bakaya < 0 ? 'text-green-600' : 'text-red-600'
+              }`}
+            >
+              ₹{kisan.bakaya?.toFixed(2) || '0.00'}
+            </p>
+            <p className="text-xs text-gray-500">
+              This balance updates automatically with transactions and payments.
+            </p>
+          </div>
+        )}
 
         <div className="flex justify-end space-x-4 mt-6">
-          {!isEditing ? (
+          {kisanId === "new" ? (
             <>
               <button
                 type="button"
                 onClick={() => router.push("/dashboard/kisans")}
-                className="px-4 py-2 bg-gray-300 text-gray-800 font-semibold rounded-md hover:bg-gray-400"
-              >
-                Back to List
-              </button>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault(); // Prevent accidental form submission
-                  console.log("Edit Kisan button clicked, setting isEditing to true");
-                  setIsEditing(true);
-                }}
-                className="px-4 py-2 bg-blue-600 text-white font-semibold rounded-md shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-              >
-                Edit Kisan
-              </button>
-            </>
-          ) : (
-            <>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsEditing(false);
-                  // Reset form fields to original kisan values on cancel
-                  if (kisan) {
-                    setName(kisan.name || "");
-                    setContactNumber(kisan.contactNumber || "");
-                    setWhatsappNumber(kisan.whatsappNumber || "");
-                    setAlternateContactNumber(kisan.alternateContactNumber || "");
-                    setVillage(kisan.village || "");
-                    setAddress(kisan.address || "");
-                    // Removed landArea reset
-                    setCropsGrown(kisan.cropsSold?.join(', ') || ""); // Reset cropsSold
-                    setAadharNumber(kisan.aadhaarNumber || ""); // Reset aadhaarNumber
-                    setIsWhatsappSameAsMobile(
-                      !!kisan.contactNumber &&
-                      kisan.contactNumber === kisan.whatsappNumber
-                    );
-                  }
-                  setSubmitMessage(null); // Clear any messages
-                }}
                 className="px-4 py-2 bg-gray-300 text-gray-800 font-semibold rounded-md hover:bg-gray-400"
                 disabled={isSubmitting}
               >
@@ -575,31 +583,92 @@ export default function KisanDetailsPage({ params }: KisanDetailsPageProps) {
                 className="px-4 py-2 bg-green-600 text-white font-semibold rounded-md shadow-sm hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:opacity-50"
                 disabled={isSubmitting}
               >
-                {isSubmitting ? "Saving..." : "Save Changes"}
+                {isSubmitting ? "Adding..." : "Add Kisan"}
               </button>
             </>
+          ) : (
+            // Existing kisan view/edit buttons
+            !isEditing ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => router.push("/dashboard/kisans")}
+                  className="px-4 py-2 bg-gray-300 text-gray-800 font-semibold rounded-md hover:bg-gray-400"
+                >
+                  Back to List
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault(); // Prevent accidental form submission
+                    console.log("Edit Kisan button clicked, setting isEditing to true");
+                    setIsEditing(true);
+                  }}
+                  className="px-4 py-2 bg-blue-600 text-white font-semibold rounded-md shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                >
+                  Edit Kisan
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsEditing(false);
+                    // Reset form fields to original kisan values on cancel
+                    if (kisan) {
+                      setName(kisan.name || "");
+                      setContactNumber(kisan.contactNumber || "");
+                      setWhatsappNumber(kisan.whatsappNumber || "");
+                      setAlternateContactNumber(kisan.alternateContactNumber || "");
+                      setVillage(kisan.village || "");
+                      setAddress(kisan.address || "");
+                      setCropsGrown(kisan.cropsSold?.join(', ') || "");
+                      setAadharNumber(kisan.aadhaarNumber || "");
+                      setIsWhatsappSameAsMobile(
+                        !!kisan.contactNumber &&
+                        kisan.contactNumber === kisan.whatsappNumber
+                      );
+                    }
+                    setSubmitMessage(null); // Clear any messages
+                  }}
+                  className="px-4 py-2 bg-gray-300 text-gray-800 font-semibold rounded-md hover:bg-gray-400"
+                  disabled={isSubmitting}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-green-600 text-white font-semibold rounded-md shadow-sm hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:opacity-50"
+                  disabled={isSubmitting}
+                >
+                  {isSubmitting ? "Saving..." : "Save Changes"}
+                </button>
+              </>
+            )
           )}
         </div>
 
-        {/* Action Buttons: Record Payment & Delete */}
-        <div className="mt-8 pt-4 border-t border-gray-200 flex justify-between">
-            <button
-              type="button"
-              onClick={handleOpenPaymentModal}
-              className="px-4 py-2 bg-purple-600 text-white font-semibold rounded-md shadow-sm hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 disabled:opacity-50"
-              disabled={isSubmitting || isEditing} // Disable if editing or submitting main form
-            >
-              Record Payment
-            </button>
-            <button
-              type="button"
-              onClick={handleDelete}
-              className="px-4 py-2 bg-red-600 text-white font-semibold rounded-md shadow-sm hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:opacity-50"
-              disabled={isSubmitting || isEditing} // Disable if editing or submitting main form
-            >
-              Delete Kisan
-            </button>
-        </div>
+        {kisanId !== "new" && ( // Only show action buttons for existing kisans
+          <div className="mt-8 pt-4 border-t border-gray-200 flex justify-between">
+              <button
+                type="button"
+                onClick={handleOpenPaymentModal}
+                className="px-4 py-2 bg-purple-600 text-white font-semibold rounded-md shadow-sm hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 disabled:opacity-50"
+                disabled={isSubmitting || isEditing} // Disable if editing or submitting main form
+              >
+                Record Payment
+              </button>
+              <button
+                type="button"
+                onClick={handleDelete}
+                className="px-4 py-2 bg-red-600 text-white font-semibold rounded-md shadow-sm hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:opacity-50"
+                disabled={isSubmitting || isEditing} // Disable if editing or submitting main form
+              >
+                Delete Kisan
+              </button>
+          </div>
+        )}
       </form>
 
       {/* Payment Modal */}

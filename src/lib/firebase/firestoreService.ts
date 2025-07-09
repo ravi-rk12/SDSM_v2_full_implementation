@@ -356,11 +356,23 @@ export const updateSystemSettings = async (
 // --- Transaction Operations ---
 export const transactionsCollection = collection(db, "transactions");
 
+// Interface for transaction filters
+export interface TransactionFilters {
+  startDate?: Date | null;
+  endDate?: Date | null;
+  kisanRef?: string | null;
+  vyapariRef?: string | null;
+  productRef?: string | null; // This will filter by productRef within the productRefs array
+}
+
 export const addTransaction = async (
-  transactionData: Omit<Transaction, "id" | "createdAt" | "updatedAt">
+  transactionData: Omit<Transaction, "id" | "createdAt" | "updatedAt" | "productRefs"> // Exclude productRefs as we'll generate it
 ): Promise<Transaction> => {
   const batch = writeBatch(db);
   const transactionRef = doc(transactionsCollection);
+
+  // Generate productRefs array from items for denormalization
+  const productRefs = Array.from(new Set(transactionData.items.map(item => item.productRef)));
 
   // Prepare transaction data
   const newTransactionData = {
@@ -369,6 +381,7 @@ export const addTransaction = async (
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
     id: transactionRef.id,
+    productRefs: productRefs, // Add the denormalized productRefs
   };
   batch.set(transactionRef, newTransactionData);
 
@@ -435,31 +448,57 @@ export const addTransaction = async (
   }
 };
 
-export const getTransactions = async (): Promise<Transaction[]> => {
+export const getTransactions = async (filters: TransactionFilters = {}): Promise<Transaction[]> => {
   try {
-    const q = query(
-      transactionsCollection,
-      orderBy("transactionDate", "desc"),
-      orderBy("createdAt", "desc") // Secondary order to handle same date transactions
-    );
+    let q: any = query(transactionsCollection); // Start with the base collection query
+
+    // Apply filters
+    if (filters.startDate) {
+      q = query(q, where("transactionDate", ">=", Timestamp.fromDate(filters.startDate)));
+    }
+    if (filters.endDate) {
+      // To include the entire end day, set the timestamp to the end of the day
+      const endDateInclusive = new Date(filters.endDate);
+      endDateInclusive.setHours(23, 59, 59, 999);
+      q = query(q, where("transactionDate", "<=", Timestamp.fromDate(endDateInclusive)));
+    }
+    if (filters.kisanRef) {
+      q = query(q, where("kisanRef", "==", filters.kisanRef));
+    }
+    if (filters.vyapariRef) {
+      q = query(q, where("vyapariRef", "==", filters.vyapariRef));
+    }
+    if (filters.productRef) {
+      // Use array-contains to query for a product ID within the productRefs array
+      q = query(q, where("productRefs", "array-contains", filters.productRef));
+    }
+
+    // Always order for consistent results, especially with range queries
+    // Firestore requires orderBy fields to be part of the query's where clauses
+    // or to be the first orderBy field. For complex filters, composite indexes are key.
+    q = query(q, orderBy("transactionDate", "desc"), orderBy("createdAt", "desc"));
+
     const querySnapshot = await getDocs(q);
+
+    // IMPORTANT: For any combination of `where` clauses (especially with `orderBy`),
+    // you might need to create composite indexes in your Firebase Console.
+    // Firestore will typically provide a link in the error message if an index is missing.
+    console.log("Firestore Query Constructed:", q); // Log the query for debugging
 
     return querySnapshot.docs.map((transactionDoc) => {
       const data = transactionDoc.data();
       // Process raw data from Firestore to convert Timestamps to Dates
       const processedData = processFirestoreDataForRead(data);
 
-      // Assuming kisanName and vyapariName are denormalized on the transaction document itself
-      // This avoids N+1 reads for names and relies on the addTransaction ensuring these fields exist.
       return {
         id: transactionDoc.id,
         ...processedData,
-        kisanName: processedData.kisanName || "Unknown Kisan", // Provide a fallback
-        vyapariName: processedData.vyapariName || "Unknown Vyapari", // Provide a fallback
+        kisanName: processedData.kisanName || "Unknown Kisan",
+        vyapariName: processedData.vyapariName || "Unknown Vyapari",
       } as Transaction;
     });
   } catch (error) {
-    console.error("Error fetching Transactions:", error);
+    console.error("Error fetching Transactions with filters:", error);
     throw new Error("Failed to fetch Transactions.");
   }
 };

@@ -11,10 +11,10 @@ export interface AuthUser {
   displayName: string | null;
   photoURL: string | null;
   role: UserRole;
-  createdAt: Date | Timestamp; // Changed to union type
-  lastLoginAt: Date | Timestamp; // Changed to union type
+  createdAt: Date | Timestamp;
+  lastLoginAt: Date | Timestamp;
   location?: string;
-  lastActivityAt?: Date | Timestamp; // Changed to union type
+  lastActivityAt?: Date | Timestamp;
   featuresUsed?: string[];
   deviceInfo?: {
     browser?: string;
@@ -36,46 +36,52 @@ export interface Kisan {
   hasWhatsapp?: boolean; // Default: true. Master toggle for WhatsApp availability.
   isWhatsappSameAsContact?: boolean; // Default: true. True if whatsappNumber is same as contactNumber.
   whatsappNumber?: string | null; // Only if hasWhatsapp true AND isWhatsappSameAsContact false.
+  alternateContactNumber?: string | null;
   aadhaarNumber?: string | null; // Optional
   isAnonymous?: boolean; // True for "Nakadi Kisan"
   registeredByRef: string; // UID of the user who registered this Kisan
   bakaya?: number; // Keep as number, Firestore supports it.
-  createdAt: Date | Timestamp; // Changed to union type
-  updatedAt: Date | Timestamp; // Changed to union type
+  createdAt: Date | Timestamp;
+  updatedAt: Date | Timestamp;
   notes?: string; // Optional remarks by operator
 
+  // NEW: Crops sold by this Kisan
+  cropsSold?: string[] | null;
+
   // Data Science Fields (Optional or calculated by Cloud Functions - not handled client-side for now)
-  landAreaAcres?: number;
-  primaryCropTypes?: string[];
   farmingExperienceYears?: number;
   bankAccountDetails?: { accountNumber: string; ifscCode: string }; // Encrypted/masked if stored directly
   averageMonthlyVolumeKg?: number; // Calculated by CF
   totalTransactionsCount?: number; // Calculated by CF
   loyaltyScore?: number; // Calculated by DS
-  lastTransactionDate?: Date | Timestamp; // Changed to union type
+  lastTransactionDate?: Date | Timestamp;
   preferredPaymentMethod?: string;
 }
 
 export interface Vyapari {
   id: string; // Firestore Document ID
   name: string; // MANDATORY
-  address?: string | null; // Allow null
-  pincode?: string | null; // Allow null
-  village?: string | null; // Allow null
+  address?: string | null;
+  pincode?: string | null;
+  village?: string | null;
   city: string | null;
-  district?: string | null; // Allow null
-  state?: string | null; // Allow null
-  contactNumber?: string | null; // Allow null (THIS IS THE PRIMARY FIX FOR THE ERROR)
+  district?: string | null;
+  state?: string | null;
+  contactNumber?: string | null;
   hasWhatsapp?: boolean;
   isWhatsappSameAsContact?: boolean;
-  whatsappNumber?: string | null; // Allow null
-  gstNumber?: string | null; // Allow null
+  whatsappNumber?: string | null;
+  alternateContactNumber?: string | null;
+  gstNumber?: string | null;
   isAnonymous?: boolean;
   registeredByRef: string;
-  bakaya?: number; // Keep as number, Firestore supports it.
-  createdAt: Date | Timestamp; // Changed to union type
-  updatedAt: Date | Timestamp; // Changed to union type
-  notes?: string | null; // Allow null
+  bakaya?: number;
+  createdAt: Date | Timestamp;
+  updatedAt: Date | Timestamp;
+  notes?: string | null;
+
+  // NEW: Crops bought by this Vyapari
+  cropsBought?: string[] | null;
 
   // Data Science Fields (Optional or calculated by Cloud Functions - not handled client-side for now)
   businessType?: string; // e.g., 'Retailer', 'Wholesaler'
@@ -83,30 +89,38 @@ export interface Vyapari {
   averageMonthlyVolumeKg?: number; // Calculated by CF
   totalTransactionsCount?: number; // Calculated by CF
   loyaltyScore?: number; // Calculated by DS
-  lastTransactionDate?: Date | Timestamp; // Changed to union type
+  lastTransactionDate?: Date | Timestamp;
 }
 
 export interface Product {
   id: string; // Firestore Document ID
   name: string; // MANDATORY
-  unit: string; // But changed to 'string', Always 'kg' as per discussion
-  category?: string; // e.g., "Grain", "Vegetable"
-  description?: string; // Optional
+  unit: string; // Always 'kg' as per discussion
+  category?: string | null; // e.g., "Grain", "Vegetable"
+  description?: string | null; // Optional
+  defaultUnitPrice?: number | null; // MADE OPTIONAL
   active: boolean; // Is the product currently active/tradable?
-  createdAt: Date | Timestamp; // Changed to union type
-  updatedAt: Date | Timestamp; // Changed to union type
+  createdAt: Date | Timestamp;
+  updatedAt: Date | Timestamp;
 
   // Data Science Fields (Suggested from external data, user confirmed, or calculated - not handled client-side for now)
-  seasonality?: ("Rabi" | "Kharif" | "Zaid" | "Year-round")[]; // CRITICAL for crop suggestions
-  typicalYieldPerAcreKg?: number; // Suggested from external data
-  shelfLifeDays?: number; // Suggested from external data
-  storageRequirements?: string; // Suggested from external data
+  seasonality?: ("Rabi" | "Kharif" | "Zaid" | "Year-round")[];
+  typicalYieldPerAcreKg?: number;
+  shelfLifeDays?: number;
+  storageRequirements?: string;
   lastUnitPriceSold?: number; // Cached by CF
   averageUnitPriceLast7Days?: number; // Calculated by CF
   averageUnitPriceLast30Days?: number; // Calculated by CF
   totalQuantitySoldKg?: number; // Calculated by CF
   marketDemandIndex?: number; // Calculated by DS
   growingRegionIndia?: string[]; // Suggested from external data
+
+  // NEW: Price Statistics (to be populated by Cloud Functions/backend logic)
+  averagePrice?: number | null;
+  minPrice?: number | null;
+  maxPrice?: number | null;
+  medianPrice?: number | null;
+  modePrice?: number | null;
 }
 
 // --- Transaction & Financial Types ---
@@ -129,7 +143,7 @@ export interface Transaction {
   kisanName: string; // Add this for displaying the name
   vyapariRef: string;
   vyapariName: string; // Add this for displaying the name
-  transactionDate: Date | Timestamp; // Changed to union type
+  transactionDate: Date | Timestamp;
   recordedByRef: string;
   items: TransactionItem[];
 
@@ -148,9 +162,9 @@ export interface Transaction {
   amountPaidKisan: number; // ADDED: Amount paid to Kisan at the time of this transaction
   amountPaidVyapari: number; // ADDED: Amount collected from Vyapari at the time of this transaction
 
-  status: 'pending' | 'completed' | 'cancelled'; // Changed to this simpler status for now based on page.tsx usage
-  createdAt: Date | Timestamp; // Changed to union type
-  updatedAt: Date | Timestamp; // Changed to union type
+  status: 'pending' | 'completed' | 'cancelled';
+  createdAt: Date | Timestamp;
+  updatedAt: Date | Timestamp;
   notes?: string; // General transaction remarks
 
   // Data Science Fields (not handled client-side for now)
@@ -181,10 +195,10 @@ export interface Payment {
     | "upi"
     | "card_swipe";
   transactionRef?: string; // Optional: If payment is for a specific transaction
-  paymentDate: Date | Timestamp; // Changed to union type
+  paymentDate: Date | Timestamp;
   recordedByRef: string; // UID of the user who recorded the payment
-  createdAt: Date | Timestamp; // Changed to union type
-  updatedAt: Date | Timestamp; // Changed to union type
+  createdAt: Date | Timestamp;
+  updatedAt: Date | Timestamp;
   notes?: string; // Payment specific notes
   paymentReferenceId?: string; // e.g., Cheque No., UPI Txn ID, Bank UTR
   bankDetails?: { accountNumber: string; ifscCode: string }; // Masked details
@@ -196,7 +210,7 @@ export interface Balance {
   entityRef: string; // Document ID of Kisan or Vyapari (redundant but explicit)
   entityType: "kisan" | "vyapari";
   currentOutstanding: number; // The live bakaya for this entity (ideally updated via CF)
-  lastUpdated: Date | Timestamp; // Changed to union type
+  lastUpdated: Date | Timestamp;
   lastAffectedTransactionRef?: string; // Ref to last transaction affecting balance
   lastAffectedPaymentRef?: string; // Ref to last payment affecting balance
 
@@ -212,9 +226,9 @@ export interface Bill {
   entityRef: string; // Document ID of Kisan or Vyapari
   entityType: "kisan" | "vyapari";
   transactionsIncludedRefs: string[]; // Array of transaction IDs included in this bill
-  billDate: Date | Timestamp; // Changed to union type
-  periodStart: Date | Timestamp; // Changed to union type
-  periodEnd: Date | Timestamp; // Changed to union type
+  billDate: Date | Timestamp;
+  periodStart: Date | Timestamp;
+  periodEnd: Date | Timestamp;
 
   previousBakayaAmount: number; // Outstanding balance at periodStart
   totalTransactionsAmount: number; // Sum of subTotals for transactions in period
@@ -229,8 +243,8 @@ export interface Bill {
 
   status: "generated" | "sent" | "paid"; // Tracking bill status
   generatedByRef: string; // UID of user who generated bill
-  createdAt: Date | Timestamp; // Changed to union type
-  updatedAt: Date | Timestamp; // Changed to union type
+  createdAt: Date | Timestamp;
+  updatedAt: Date | Timestamp;
   pdfUrl?: string; // URL to archived PDF in Storage (future)
   isRevisedBill?: boolean;
   previousBillRef?: string; // Link to previous version if revised
@@ -239,7 +253,7 @@ export interface Bill {
 }
 
 export interface ProductPriceHistoryEntry {
-  timestamp: Date | Timestamp; // Changed to union type
+  timestamp: Date | Timestamp;
   price: number; // The unit price
   productRef: string; // Product ID
   transactionRef: string; // Transaction ID
@@ -253,24 +267,25 @@ export interface ProductPriceHistoryEntry {
 }
 
 export interface SystemSettings {
-  defaultMandiRegion: string;
   id: "mandiDefaults"; // Fixed ID for the single settings document
   commissionKisanRate: number; // e.g., 0.02 (2%)
   commissionVyapariRatePerKg: number; // e.g., 0.40
   lastBillNumber: number; // For sequential bill number generation (ideally updated via CF)
-  mandiName: string;
-  mandiAddress: string;
-  mandiContact: string;
-  mandiRegion: string;
-  mandiLogoUrl?: string; // Optional URL for Mandi logo in Storage
+  mandiDefaults?: {
+    mandiRegion: string;
+    mandiName: string;
+    mandiAddress: string;
+    mandiContact: string;
+    mandiLogoUrl?: string; // Optional URL for Mandi logo in Storage
+  };
   updatedByRef: string; // UID of user who last updated settings
-  updatedAt: Date | Timestamp; // Changed to union type
+  updatedAt: Date | Timestamp;
 }
 
 // --- Weather Data (Future External Integration - not handled client-side for now) ---
 export interface DailyWeatherData {
   id: string; // e.g., "YYYY-MM-DD" + mandiRegionId
-  date: Date | Timestamp; // Changed to union type
+  date: Date | Timestamp;
   mandiRegion: string;
   temperatureCelsius: number;
   humidityPercent: number;

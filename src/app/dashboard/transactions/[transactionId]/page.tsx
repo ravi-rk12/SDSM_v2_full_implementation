@@ -4,8 +4,35 @@
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import * as firestoreService from '@/lib/firebase/firestoreService';
-import { Transaction } from '@/types';
+import { Transaction, Kisan, Vyapari } from '@/types'; // Import Kisan and Vyapari types
 
+// Assuming a Modal component is available at @/components/Modal
+import Modal from '@/components/Modal';
+
+// --- Conceptual Tooltip Component (Replace with actual if using a library like Shadcn) ---
+const CustomTooltip: React.FC<{ content: React.ReactNode; children: React.ReactNode }> = ({ content, children }) => {
+  const [isVisible, setIsVisible] = useState(false);
+
+  return (
+    <div className="relative inline-block">
+      <div
+        onMouseEnter={() => setIsVisible(true)}
+        onMouseLeave={() => setIsVisible(false)}
+        className="cursor-pointer" // Indicate it's interactive
+      >
+        {children}
+      </div>
+      {isVisible && (
+        <div className="absolute z-10 p-2 text-sm text-white bg-gray-800 rounded-md shadow-lg -translate-y-full top-0 left-1/2 -translate-x-1/2 min-w-max">
+          {content}
+        </div>
+      )}
+    </div>
+  );
+};
+// --------------------------------------------------------------------------------------
+
+// Added the missing interface definition
 interface TransactionDetailPageProps {
   params: {
     transactionId: string;
@@ -13,34 +40,52 @@ interface TransactionDetailPageProps {
 }
 
 export default function TransactionDetailPage({ params }: TransactionDetailPageProps) {
-  // Correct way to access params in a Client Component: direct destructuring
-  const { transactionId } = params; 
+  const { transactionId } = params;
 
   const [transaction, setTransaction] = useState<Transaction | null>(null);
+  const [kisanDetails, setKisanDetails] = useState<Kisan | null>(null); // State for Kisan full details
+  const [vyapariDetails, setVyapariDetails] = useState<Vyapari | null>(null); // State for Vyapari full details
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const router = useRouter(); 
+  // States for modals
+  const [showKisanModal, setShowKisanModal] = useState(false);
+  const [showVyapariModal, setShowVyapariModal] = useState(false);
+
+  const router = useRouter();
 
   useEffect(() => {
     if (transactionId) {
-      const fetchTransaction = async () => {
+      const fetchTransactionAndRelatedData = async () => {
         try {
           setIsLoading(true);
           const fetchedTransaction = await firestoreService.getTransactionById(transactionId);
+
           if (fetchedTransaction) {
             setTransaction(fetchedTransaction);
+
+            // Fetch Kisan and Vyapari details concurrently
+            const [kisanData, vyapariData] = await Promise.all([
+              fetchedTransaction.kisanRef
+                ? firestoreService.getKisanById(fetchedTransaction.kisanRef)
+                : Promise.resolve(null),
+              fetchedTransaction.vyapariRef
+                ? firestoreService.getVyapariById(fetchedTransaction.vyapariRef)
+                : Promise.resolve(null),
+            ]);
+            setKisanDetails(kisanData);
+            setVyapariDetails(vyapariData);
           } else {
             setError('Transaction not found.');
           }
         } catch (err: any) {
-          console.error('Error fetching transaction:', err);
-          setError(`Failed to load transaction: ${err.message || 'An unknown error occurred'}`);
+          console.error('Error fetching data:', err);
+          setError(`Failed to load data: ${err.message || 'An unknown error occurred'}`);
         } finally {
           setIsLoading(false);
         }
       };
-      fetchTransaction();
+      fetchTransactionAndRelatedData();
     }
   }, [transactionId]);
 
@@ -83,19 +128,121 @@ export default function TransactionDetailPage({ params }: TransactionDetailPageP
     );
   }
 
+  // --- Render logic for Kisan/Vyapari Modals ---
+  const renderKisanModal = () => {
+    if (!kisanDetails) return null;
+    return (
+      <Modal
+        isOpen={showKisanModal}
+        onClose={() => setShowKisanModal(false)}
+        title={`Kisan Details: ${kisanDetails.name}`}
+      >
+        <div className="space-y-3 p-4">
+          <p><strong>Village:</strong> {kisanDetails.village}</p>
+          <p><strong>Contact:</strong> {kisanDetails.contactNumber}</p>
+          {/* Corrected access for bankAccountDetails */}
+          <p>
+            <strong>Bank Account:</strong>{" "}
+            {kisanDetails.bankAccountDetails?.accountNumber || 'N/A'}
+            {kisanDetails.bankAccountDetails?.ifscCode ? ` (IFSC: ${kisanDetails.bankAccountDetails.ifscCode})` : ''}
+          </p>
+          <p><strong>Aadhaar No:</strong> {kisanDetails.aadhaarNumber || 'N/A'}</p>
+          <p className="font-bold text-lg"><strong>Current Bakaya:</strong> ₹{kisanDetails.bakaya?.toFixed(2) || '0.00'}</p>
+          {/* Add more details as needed */}
+          <button
+            onClick={() => setShowKisanModal(false)}
+            className="mt-4 bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-md"
+          >
+            Close
+          </button>
+        </div>
+      </Modal>
+    );
+  };
+
+  const renderVyapariModal = () => {
+    if (!vyapariDetails) return null;
+    return (
+      <Modal
+        isOpen={showVyapariModal}
+        onClose={() => setShowVyapariModal(false)}
+        title={`Vyapari Details: ${vyapariDetails.name}`}
+      >
+        <div className="space-y-3 p-4">
+          <p><strong>City:</strong> {vyapariDetails.city}</p>
+          <p><strong>Contact:</strong> {vyapariDetails.contactNumber}</p>
+          {/* Removed GSTIN display due to type error. Add 'gstin?: string;' to your Vyapari type if needed. */}
+          {/* <p><strong>GSTIN:</strong> {vyapariDetails.gstin || 'N/A'}</p> */}
+          <p className="font-bold text-lg"><strong>Current Bakaya:</strong> ₹{vyapariDetails.bakaya?.toFixed(2) || '0.00'}</p>
+          {/* Add more details as needed */}
+          <button
+            onClick={() => setShowVyapariModal(false)}
+            className="mt-4 bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-md"
+          >
+            Close
+          </button>
+        </div>
+      </Modal>
+    );
+  };
+
+
   return (
     <div className="container mx-auto p-4">
       <h1 className="text-2xl font-bold mb-4">Transaction Details for #{transaction.id}</h1>
 
       <div className="bg-white shadow-md rounded-lg p-6 mb-6">
         <h2 className="text-xl font-semibold mb-4 text-gray-700">Basic Information</h2>
-        <p className="mb-2"><span className="font-medium">Kisan:</span> {transaction.kisanName}</p>
-        <p className="mb-2"><span className="font-medium">Vyapari:</span> {transaction.vyapariName}</p>
+        <p className="mb-2">
+          <span className="font-medium">Kisan:</span>{' '}
+          {kisanDetails ? (
+            <CustomTooltip
+              content={
+                <div className="text-center">
+                  <p className="font-bold">{kisanDetails.name}</p>
+                  <p>Village: {kisanDetails.village}</p>
+                  <p>Contact: {kisanDetails.contactNumber}</p>
+                  <p>Bakaya: ₹{kisanDetails.bakaya?.toFixed(2) || '0.00'}</p>
+                </div>
+              }
+            >
+              <span className="text-blue-600 hover:underline cursor-pointer" onClick={() => setShowKisanModal(true)}>
+                {transaction.kisanName}
+              </span>
+            </CustomTooltip>
+          ) : (
+            <span>{transaction.kisanName}</span>
+          )}
+        </p>
+        <p className="mb-2">
+          <span className="font-medium">Vyapari:</span>{' '}
+          {vyapariDetails ? (
+            <CustomTooltip
+              content={
+                <div className="text-center">
+                  <p className="font-bold">{vyapariDetails.name}</p>
+                  <p>City: {vyapariDetails.city}</p>
+                  <p>Contact: {vyapariDetails.contactNumber}</p>
+                  <p>Bakaya: ₹{vyapariDetails.bakaya?.toFixed(2) || '0.00'}</p>
+                </div>
+              }
+            >
+              <span className="text-blue-600 hover:underline cursor-pointer" onClick={() => setShowVyapariModal(true)}>
+                {transaction.vyapariName}
+              </span>
+            </CustomTooltip>
+          ) : (
+            <span>{transaction.vyapariName}</span>
+          )}
+        </p>
         <p className="mb-2">
           <span className="font-medium">Date:</span>{" "}
-          {(transaction.transactionDate as Date).toLocaleDateString()}{/* Applied type assertion here */}
+          {(transaction.transactionDate as Date).toLocaleDateString()}
         </p>
-        <p className="mb-2"><span className="font-medium">Mandi Region:</span> {transaction.mandiRegion}</p>
+        <p className="mb-2">
+            <span className="font-medium">Mandi Region:</span>{" "}
+            {transaction.mandiRegion || 'N/A'} {/* Added || 'N/A' to handle potentially missing data */}
+        </p>
         <p className="mb-2"><span className="font-medium">Recorded By:</span> {transaction.recordedByRef}</p>
         <p className="mb-2"><span className="font-medium">Status:</span> {transaction.status}</p>
         <p className="mb-2"><span className="font-medium">Notes:</span> {transaction.notes || 'N/A'}</p>
@@ -156,6 +303,10 @@ export default function TransactionDetailPage({ params }: TransactionDetailPageP
       >
         Back to All Transactions
       </button>
+
+      {/* Render Modals */}
+      {renderKisanModal()}
+      {renderVyapariModal()}
     </div>
   );
 }

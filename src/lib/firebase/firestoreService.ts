@@ -1,6 +1,5 @@
 // src/lib/firebase/firestoreService.ts
 
-import { db } from "./clientApp"; // Import the initialized Firestore instance
 import {
   collection,
   doc,
@@ -11,13 +10,17 @@ import {
   deleteDoc,
   query,
   where,
+  DocumentData,
   orderBy,
   limit,
   Timestamp,
+  setDoc,
   serverTimestamp,
+  writeBatch, // Import writeBatch
 } from "firebase/firestore";
 
-import { Kisan, Vyapari, Product, SystemSettings, Transaction } from "@/types";
+import { db } from "./clientApp"; // Import the initialized Firestore instance
+import { Kisan, Vyapari, Product, SystemSettings, Transaction, Payment } from "@/types"; // Import Payment type
 
 // --- GLOBAL UTILITIES (Required by other files like add/page.tsx) ---
 
@@ -96,16 +99,19 @@ export const getKisanById = async (id: string): Promise<Kisan | null> => {
 };
 
 export const addKisan = async (
-  kisanData: Omit<Kisan, "id" | "createdAt" | "updatedAt" | "lastTransactionDate"> // Exclude these as they're set by serverTimestamp or later
-): Promise<string> => {
+  kisanData: Omit<Kisan, "id" | "createdAt" | "updatedAt" | "lastTransactionDate" | "cropsSold">
+): Promise<Kisan> => { // Changed return type to Promise<Kisan>
   try {
     const docRef = await addDoc(kisansCollection, {
       ...kisanData,
       bakaya: kisanData.bakaya || 0, // Ensure bakaya is initialized
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
+      cropsSold: [], // Initialize cropsSold as an empty array
     });
-    return docRef.id;
+    const newKisan = await getKisanById(docRef.id); // Fetch the newly added Kisan
+    if (!newKisan) throw new Error("Failed to retrieve new Kisan after adding.");
+    return newKisan;
   } catch (error) {
     console.error("Error adding Kisan:", error);
     throw new Error("Failed to add Kisan.");
@@ -136,6 +142,7 @@ export const deleteKisan = async (id: string): Promise<void> => {
     throw new Error(`Failed to delete Kisan with ID ${id}.`);
   }
 };
+
 
 // --- Vyapari Operations ---
 const vyaparisCollection = collection(db, "vyaparis");
@@ -176,16 +183,19 @@ export const getVyapariById = async (id: string): Promise<Vyapari | null> => {
 };
 
 export const addVyapari = async (
-  vyapariData: Omit<Vyapari, "id" | "createdAt" | "updatedAt" | "lastTransactionDate">
-): Promise<string> => {
+  vyapariData: Omit<Vyapari, "id" | "createdAt" | "updatedAt" | "lastTransactionDate" | "cropsBought">
+): Promise<Vyapari> => { // Changed return type to Promise<Vyapari>
   try {
     const docRef = await addDoc(vyaparisCollection, {
       ...vyapariData,
       bakaya: vyapariData.bakaya || 0, // Ensure bakaya is initialized
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
+      cropsBought: [], // Initialize cropsBought as an empty array
     });
-    return docRef.id;
+    const newVyapari = await getVyapariById(docRef.id); // Fetch the newly added Vyapari
+    if (!newVyapari) throw new Error("Failed to retrieve new Vyapari after adding.");
+    return newVyapari;
   } catch (error) {
     console.error("Error adding Vyapari:", error);
     throw new Error("Failed to add Vyapari.");
@@ -216,6 +226,7 @@ export const deleteVyapari = async (id: string): Promise<void> => {
     throw new Error(`Failed to delete Vyapari with ID ${id}.`);
   }
 };
+
 
 // --- Product Operations ---
 const productsCollection = collection(db, "products");
@@ -258,7 +269,7 @@ export const getProductById = async (id: string): Promise<Product | null> => {
 
 export const addProduct = async (
   productData: Omit<Product, "id" | "createdAt" | "updatedAt">
-): Promise<string> => {
+): Promise<Product> => { // Changed return type to Promise<Product>
   try {
     const docRef = await addDoc(productsCollection, {
       ...productData,
@@ -266,7 +277,9 @@ export const addProduct = async (
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
-    return docRef.id;
+    const newProduct = await getProductById(docRef.id); // Fetch the newly added Product
+    if (!newProduct) throw new Error("Failed to retrieve new Product after adding.");
+    return newProduct;
   } catch (error) {
     console.error("Error adding Product:", error);
     throw new Error("Failed to add Product.");
@@ -297,6 +310,7 @@ export const deleteProduct = async (id: string): Promise<void> => {
     throw new Error(`Failed to delete Product with ID ${id}.`);
   }
 };
+
 
 // --- System Settings Operations ---
 // Note: Collection name 'systemSettings' and document ID 'mandiDefaults' are fixed.
@@ -340,24 +354,84 @@ export const updateSystemSettings = async (
 };
 
 // --- Transaction Operations ---
-const transactionsCollection = collection(db, "transactions");
+export const transactionsCollection = collection(db, "transactions");
 
 export const addTransaction = async (
-  // Ensure transactionDate is a Date object for conversion to Timestamp
   transactionData: Omit<Transaction, "id" | "createdAt" | "updatedAt">
-): Promise<string> => {
-  try {
-    const docRef = await addDoc(transactionsCollection, {
-      ...transactionData,
-      // Convert Date object to Firestore Timestamp explicitly for consistency
-      transactionDate: Timestamp.fromDate(transactionData.transactionDate as Date),
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
+): Promise<Transaction> => {
+  const batch = writeBatch(db);
+  const transactionRef = doc(transactionsCollection);
+
+  // Prepare transaction data
+  const newTransactionData = {
+    ...transactionData,
+    transactionDate: Timestamp.fromDate(transactionData.transactionDate as Date),
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    id: transactionRef.id,
+  };
+  batch.set(transactionRef, newTransactionData);
+
+  // --- Update Kisan's bakaya and cropsSold ---
+  const kisanRef = doc(db, 'kisans', transactionData.kisanRef);
+  const kisanSnap = await getDoc(kisanRef);
+  if (kisanSnap.exists()) {
+    const currentKisanData = processFirestoreDataForRead(kisanSnap.data()) as Kisan;
+    const currentKisanBakaya = currentKisanData.bakaya || 0;
+    const currentKisanCropsSold = new Set(currentKisanData.cropsSold || []);
+
+    // Update bakaya
+    const newKisanBakaya = currentKisanBakaya - transactionData.netAmountKisan + transactionData.amountPaidKisan;
+
+    // Update cropsSold
+    transactionData.items.forEach(item => {
+      currentKisanCropsSold.add(item.productName);
     });
-    return docRef.id;
+    const updatedKisanCropsSold = Array.from(currentKisanCropsSold);
+
+    batch.update(kisanRef, {
+      bakaya: newKisanBakaya,
+      cropsSold: updatedKisanCropsSold, // Update cropsSold
+      updatedAt: serverTimestamp()
+    });
+  } else {
+    console.warn(`Kisan with ID ${transactionData.kisanRef} not found for bakaya and cropsSold update.`);
+  }
+
+  // --- Update Vyapari's bakaya and cropsBought ---
+  const vyapariRef = doc(db, 'vyaparis', transactionData.vyapariRef);
+  const vyapariSnap = await getDoc(vyapariRef);
+  if (vyapariSnap.exists()) {
+    const currentVyapariData = processFirestoreDataForRead(vyapariSnap.data()) as Vyapari;
+    const currentVyapariBakaya = currentVyapariData.bakaya || 0;
+    const currentVyapariCropsBought = new Set(currentVyapariData.cropsBought || []);
+
+    // Update bakaya
+    const newVyapariBakaya = currentVyapariBakaya + transactionData.netAmountVyapari - transactionData.amountPaidVyapari;
+
+    // Update cropsBought
+    transactionData.items.forEach(item => {
+      currentVyapariCropsBought.add(item.productName);
+    });
+    const updatedVyapariCropsBought = Array.from(currentVyapariCropsBought);
+
+    batch.update(vyapariRef, {
+      bakaya: newVyapariBakaya,
+      cropsBought: updatedVyapariCropsBought, // Update cropsBought
+      updatedAt: serverTimestamp()
+    });
+  } else {
+    console.warn(`Vyapari with ID ${transactionData.vyapariRef} not found for bakaya and cropsBought update.`);
+  }
+
+  try {
+    await batch.commit();
+    const newTransaction = await getTransactionById(transactionRef.id);
+    if (!newTransaction) throw new Error("Failed to retrieve new Transaction after adding.");
+    return newTransaction;
   } catch (error) {
-    console.error("Error adding Transaction:", error);
-    throw new Error("Failed to add Transaction.");
+    console.error("Error committing transaction batch:", error);
+    throw new Error("Failed to add Transaction and update balances.");
   }
 };
 
@@ -370,46 +444,20 @@ export const getTransactions = async (): Promise<Transaction[]> => {
     );
     const querySnapshot = await getDocs(q);
 
-    const transactionsWithDetails: Transaction[] = [];
-
-    // Fetch Kisan and Vyapari names for each transaction
-    // Note: This approach performs N+1 reads if names are not denormalized on the transaction itself.
-    // If kisanName/vyapariName are denormalized fields on the Transaction document in Firestore,
-    // you can remove the nested getDoc calls for better read performance.
-    for (const transactionDoc of querySnapshot.docs) {
+    return querySnapshot.docs.map((transactionDoc) => {
       const data = transactionDoc.data();
-      const transactionId = transactionDoc.id;
-
       // Process raw data from Firestore to convert Timestamps to Dates
       const processedData = processFirestoreDataForRead(data);
 
-      let kisanName = "Unknown Kisan";
-      if (processedData.kisanRef) {
-        const kisanDocRef = doc(db, "kisans", processedData.kisanRef);
-        const kisanDocSnap = await getDoc(kisanDocRef);
-        if (kisanDocSnap.exists()) {
-          kisanName = (processFirestoreDataForRead(kisanDocSnap.data()) as Kisan).name;
-        }
-      }
-
-      let vyapariName = "Unknown Vyapari";
-      if (processedData.vyapariRef) {
-        const vyapariDocRef = doc(db, "vyaparis", processedData.vyapariRef);
-        const vyapariDocSnap = await getDoc(vyapariDocRef);
-        if (vyapariDocSnap.exists()) {
-          vyapariName = (processFirestoreDataForRead(vyapariDocSnap.data()) as Vyapari).name;
-        }
-      }
-
-      transactionsWithDetails.push({
-        id: transactionId,
-        ...processedData, // Spread the processed data (already has transactionDate as Date)
-        kisanName: kisanName, // Add denormalized names (or fetch if not present in transaction doc)
-        vyapariName: vyapariName, // Add denormalized names (or fetch if not present in transaction doc)
-      } as Transaction);
-    }
-
-    return transactionsWithDetails;
+      // Assuming kisanName and vyapariName are denormalized on the transaction document itself
+      // This avoids N+1 reads for names and relies on the addTransaction ensuring these fields exist.
+      return {
+        id: transactionDoc.id,
+        ...processedData,
+        kisanName: processedData.kisanName || "Unknown Kisan", // Provide a fallback
+        vyapariName: processedData.vyapariName || "Unknown Vyapari", // Provide a fallback
+      } as Transaction;
+    });
   } catch (error) {
     console.error("Error fetching Transactions:", error);
     throw new Error("Failed to fetch Transactions.");
@@ -423,34 +471,15 @@ export const getTransactionById = async (transactionId: string): Promise<Transac
 
     if (docSnap.exists()) {
       const data = docSnap.data();
-      // Process raw data first, casting it to the core transaction structure without names
-      const transactionCore = processFirestoreDataForRead(data) as Omit<Transaction, 'id' | 'kisanName' | 'vyapariName'>;
+      const processedData = processFirestoreDataForRead(data);
 
-      let kisanName = "Unknown Kisan";
-      if (transactionCore.kisanRef) {
-        const kisanDocRef = doc(db, "kisans", transactionCore.kisanRef);
-        const kisanDocSnap = await getDoc(kisanDocRef);
-        if (kisanDocSnap.exists()) {
-          kisanName = (processFirestoreDataForRead(kisanDocSnap.data()) as Kisan).name;
-        }
-      }
-
-      let vyapariName = "Unknown Vyapari";
-      if (transactionCore.vyapariRef) {
-        const vyapariDocRef = doc(db, "vyaparis", transactionCore.vyapariRef);
-        const vyapariDocSnap = await getDoc(vyapariDocRef);
-        if (vyapariDocSnap.exists()) {
-          vyapariName = (processFirestoreDataForRead(vyapariDocSnap.data()) as Vyapari).name;
-        }
-      }
-
+      // Assuming kisanName and vyapariName are denormalized on the transaction document itself
       return {
         id: docSnap.id,
-        ...transactionCore, // Spread the core data (already has transactionDate as Date)
-        kisanName: kisanName, // Add denormalized names
-        vyapariName: vyapariName, // Add denormalized names
-      } as Transaction; // Finally, assert to the full Transaction type
-
+        ...processedData,
+        kisanName: processedData.kisanName || "Unknown Kisan", // Provide a fallback
+        vyapariName: processedData.vyapariName || "Unknown Vyapari", // Provide a fallback
+      } as Transaction;
     } else {
       console.log(`No transaction found with ID: ${transactionId}`);
       return null;
@@ -492,5 +521,65 @@ export const deleteTransaction = async (id: string): Promise<void> => {
   } catch (error) {
     console.error(`Error deleting Transaction with ID ${id}:`, error);
     throw new Error(`Failed to delete Transaction with ID ${id}.`);
+  }
+};
+
+// --- Payment Operations (New) ---
+const paymentsCollection = collection(db, "payments");
+
+export const addPayment = async (
+  paymentData: Omit<Payment, 'id' | 'createdAt' | 'updatedAt'>
+): Promise<Payment> => {
+  const batch = writeBatch(db);
+  const paymentRef = doc(paymentsCollection); // Let Firestore generate ID
+
+  // Add payment document to batch
+  batch.set(paymentRef, {
+    ...paymentData,
+    paymentDate: Timestamp.fromDate(paymentData.paymentDate as Date), // Convert Date to Timestamp
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    id: paymentRef.id, // Add the generated ID to the document
+  });
+
+  // Update entity's bakaya (Kisan or Vyapari)
+  const entityCollectionName = paymentData.entityType === 'kisan' ? 'kisans' : 'vyaparis';
+  const entityRef = doc(db, entityCollectionName, paymentData.entityRef);
+  const entitySnap = await getDoc(entityRef);
+
+  if (entitySnap.exists()) {
+    const currentBakaya = entitySnap.data().bakaya || 0;
+    let newBakaya = currentBakaya;
+
+    // Let's assume 'bakaya' is 'what the entity owes Mandi'.
+    // If bakaya is positive, entity owes Mandi.
+    // If bakaya is negative, Mandi owes entity.
+
+    if (paymentData.entityType === 'kisan') {
+      // Payment from Mandi to Kisan. This reduces Mandi's debt (makes bakaya less negative or more positive).
+      // So, we add the amount to the current bakaya.
+      newBakaya = currentBakaya + paymentData.amount;
+    } else if (paymentData.entityType === 'vyapari') {
+      // Payment from Vyapari to Mandi. This reduces Vyapari's debt (makes bakaya less positive or or more negative).
+      // So, we subtract the amount from the current bakaya.
+      newBakaya = currentBakaya - paymentData.amount;
+    }
+
+    batch.update(entityRef, { bakaya: newBakaya, updatedAt: serverTimestamp() });
+  } else {
+    console.warn(`Entity with ID ${paymentData.entityRef} and type ${paymentData.entityType} not found for bakaya update.`);
+  }
+
+  try {
+    await batch.commit();
+    const newPaymentDoc = await getDoc(paymentRef); // Fetch the newly added payment document
+    if (!newPaymentDoc.exists()) throw new Error("Failed to retrieve new Payment after adding.");
+    return {
+      id: newPaymentDoc.id,
+      ...processFirestoreDataForRead(newPaymentDoc.data())
+    } as Payment;
+  } catch (error) {
+    console.error("Error committing payment batch:", error);
+    throw new Error("Failed to add Payment and update balances.");
   }
 };

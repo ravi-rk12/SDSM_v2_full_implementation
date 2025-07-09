@@ -11,7 +11,7 @@ import {
   Kisan,
   Vyapari,
   Product,
-  SystemSettings,
+  SystemSettings, // Make sure SystemSettings type includes mandiDefaults.mandiRegion
   Transaction,
   TransactionItem,
 } from "@/types";
@@ -87,7 +87,8 @@ export default function RecordTransactionPage() {
       setKisans(fetchedKisans);
       setVyaparis(fetchedVyaparis);
       setProducts(fetchedProducts);
-      setSystemSettings(fetchedSettings);
+      setSystemSettings(fetchedSettings); // Set system settings state
+
     } catch (err: any) {
       console.error("Error fetching data for transaction page:", err);
       setError(
@@ -101,6 +102,16 @@ export default function RecordTransactionPage() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+    // New effect to set default mandi region once systemSettings are loaded
+    const [mandiRegion, setMandiRegion] = useState<string>('N/A'); // State for the mandi region to be displayed/saved
+    useEffect(() => {
+        if (systemSettings) {
+            // Correctly access mandiRegion from mandiDefaults
+            setMandiRegion(systemSettings.mandiDefaults?.mandiRegion || 'N/A');
+        }
+    }, [systemSettings]);
+
 
   // --- Effect to fetch Kisan Bakaya when selectedKisanId changes ---
   useEffect(() => {
@@ -189,8 +200,9 @@ export default function RecordTransactionPage() {
   }, []);
 
   // --- Handlers for Quick Add Modals ---
+  // Updated to accept newId: string
   const handleKisanAdded = useCallback(
-    async (newKisanId: string) => {
+    async (newKisanId: string) => { // Changed type to string
       setShowAddKisanModal(false);
       await fetchData();
       setSelectedKisanId(newKisanId);
@@ -207,8 +219,9 @@ export default function RecordTransactionPage() {
     setShowAddKisanModal(false);
   }, []);
 
+  // Updated to accept newId: string
   const handleVyapariAdded = useCallback(
-    async (newVyapariId: string) => {
+    async (newVyapariId: string) => { // Changed type to string
       setShowAddVyapariModal(false);
       await fetchData();
       setSelectedVyapariId(newVyapariId);
@@ -225,10 +238,12 @@ export default function RecordTransactionPage() {
     setShowAddVyapariModal(false);
   }, []);
 
+  // Updated to accept newId: string
   const handleProductAdded = useCallback(
-    async (newProductId: string) => {
+    async (newProductId: string) => { // Changed type to string
       setShowAddProductModal(false);
       await fetchData();
+      // No need to select product here, as it's for transaction items
       setSubmitMessage({
         type: "success",
         text: "New Product added successfully!",
@@ -251,6 +266,7 @@ export default function RecordTransactionPage() {
     return transactionItems.reduce((sum, item) => sum + item.quantity, 0);
   }, [transactionItems]);
 
+  // CORRECTED: Access commission rates directly from systemSettings
   const displayCommissionKisanRate = systemSettings?.commissionKisanRate || 0;
   const displayCommissionVyapariRatePerKg =
     systemSettings?.commissionVyapariRatePerKg || 0;
@@ -413,11 +429,10 @@ export default function RecordTransactionPage() {
         // Include amounts paid at the time of transaction
         amountPaidKisan: parseFloat(amountPaidKisan.toFixed(2)),
         amountPaidVyapari: parseFloat(amountPaidVyapari.toFixed(2)),
-
+        transactionType: "sale_to_vyapari", // Assuming a default type for now, adjust if needed
         notes: notes || "",
-        status: "pending",
-        transactionType: "sale_to_vyapari",
-        mandiRegion: systemSettings.defaultMandiRegion || "",
+        status: "pending", // Or 'completed' based on your logic for initial status
+        mandiRegion: mandiRegion, // Use the mandiRegion state, which now gets its value from systemSettings.mandiDefaults?.mandiRegion
       };
 
       // Add the new transaction to the batch
@@ -553,36 +568,60 @@ export default function RecordTransactionPage() {
               />
             </div>
 
-            {/* Kisan Selection with Add New Button & Bakaya */}
+            {/* Mandi Region Display */}
             <div>
               <label
-                htmlFor="kisanSelect"
+                htmlFor="mandiRegion"
                 className="block text-sm font-medium text-gray-700"
               >
-                Kisan (Seller)
+                Mandi Region
               </label>
-              <div className="flex items-center space-x-2">
-                <select
-                  id="kisanSelect"
-                  value={selectedKisanId}
-                  onChange={(e) => setSelectedKisanId(e.target.value)}
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 p-2 border"
-                  required
-                  disabled={isSubmitting}
-                >
-                  <option value="">Select a Kisan</option>
-                  {kisans.map((kisan) => (
-                    <option key={kisan.id} value={kisan.id}>
-                      {kisan.name} {kisan.village ? `(${kisan.village})` : ""}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  type="button"
-                  onClick={() => setShowAddKisanModal(true)}
-                  className="mt-1 px-3 py-2 bg-blue-500 text-white text-sm font-medium rounded-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50"
-                  disabled={isSubmitting}
-                >
+              <input
+                type="text"
+                id="mandiRegion"
+                value={mandiRegion} // Use the new mandiRegion state
+                onChange={(e) => setMandiRegion(e.target.value)} // Allow user to edit if needed
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border bg-gray-50"
+                readOnly={!mandiRegion || mandiRegion === 'N/A'} // Make readOnly if not set or N/A
+                disabled={isSubmitting}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* The rest of your form components (Kisan Selection, Vyapari Selection, Items, etc.) */}
+        {/* ... (no changes needed in the following sections for this particular request) ... */}
+
+        {/* Kisan Selection with Add New Button & Bakaya */}
+        <div className="bg-white shadow-md rounded-lg p-6">
+          <label
+            htmlFor="kisanSelect"
+            className="block text-sm font-medium text-gray-700"
+          >
+            Kisan (Seller)
+          </label>
+          <div className="flex items-center space-x-2">
+            <select
+              id="kisanSelect"
+              value={selectedKisanId}
+              onChange={(e) => setSelectedKisanId(e.target.value)}
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 p-2 border"
+              required
+              disabled={isSubmitting}
+            >
+              <option value="">Select a Kisan</option>
+              {kisans.map((kisan) => (
+                <option key={kisan.id} value={kisan.id}>
+                  {kisan.name} {kisan.village ? `(${kisan.village})` : ""}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => setShowAddKisanModal(true)}
+              className="mt-1 px-3 py-2 bg-blue-500 text-white text-sm font-medium rounded-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50"
+              disabled={isSubmitting}
+            >
                   + Add New
                 </button>
               </div>
@@ -606,7 +645,7 @@ export default function RecordTransactionPage() {
             </div>
 
             {/* Vyapari Selection with Add New Button & Bakaya */}
-            <div>
+            <div className="bg-white shadow-md rounded-lg p-6">
               <label
                 htmlFor="vyapariSelect"
                 className="block text-sm font-medium text-gray-700"
@@ -656,381 +695,383 @@ export default function RecordTransactionPage() {
                 </p>
               )}
             </div>
-          </div>
-        </div>
 
-        {/* --- Transaction Items Section --- */}
-        <div className="bg-white shadow-md rounded-lg p-6">
-          <h2 className="text-xl font-semibold mb-4 text-gray-700">Items</h2>
+            {/* --- Transaction Items Section --- */}
+            <div className="bg-white shadow-md rounded-lg p-6">
+              <h2 className="text-xl font-semibold mb-4 text-gray-700">
+                Items
+              </h2>
 
-          {/* General "No Products" message with Add Product button */}
-          {products.length === 0 && (
-            <p className="text-sm text-red-500 mb-4 flex items-center">
-              No Products found. Please add products to record transactions.
-              <button
-                type="button"
-                onClick={() => setShowAddProductModal(true)}
-                className="ml-2 px-3 py-1 bg-green-500 text-white text-xs font-medium rounded-md hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:opacity-50"
-                disabled={isSubmitting}
-              >
-                + Add Product Now
-              </button>
-            </p>
-          )}
-
-          {transactionItems.map((item, index) => (
-            <div
-              key={item.tempId}
-              className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end mb-4 p-4 border rounded-md relative"
-            >
-              <div className="md:col-span-2">
-                <label
-                  htmlFor={`product-${item.tempId}`}
-                  className="block text-sm font-medium text-gray-700"
-                >
-                  Product
-                </label>
-                <div className="flex items-center space-x-2">
-                  <select
-                    id={`product-${item.tempId}`}
-                    value={item.productRef}
-                    onChange={(e) =>
-                      handleUpdateItem(index, "productRef", e.target.value)
-                    }
-                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 p-2 border"
-                    required
-                    disabled={isSubmitting}
-                  >
-                    <option value="">Select Product</option>
-                    {products.map((product) => (
-                      <option key={product.id} value={product.id}>
-                        {product.name}
-                      </option>
-                    ))}
-                  </select>
+              {/* General "No Products" message with Add Product button */}
+              {products.length === 0 && (
+                <p className="text-sm text-red-500 mb-4 flex items-center">
+                  No Products found. Please add products to record transactions.
                   <button
                     type="button"
                     onClick={() => setShowAddProductModal(true)}
-                    className="mt-1 px-3 py-2 bg-blue-500 text-white text-sm font-medium rounded-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50"
+                    className="ml-2 px-3 py-1 bg-green-500 text-white text-xs font-medium rounded-md hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:opacity-50"
                     disabled={isSubmitting}
                   >
-                    +
+                    + Add Product Now
+                  </button>
+                </p>
+              )}
+
+              {transactionItems.map((item, index) => (
+                <div
+                  key={item.tempId}
+                  className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end mb-4 p-4 border rounded-md relative"
+                >
+                  <div className="md:col-span-2">
+                    <label
+                      htmlFor={`product-${item.tempId}`}
+                      className="block text-sm font-medium text-gray-700"
+                    >
+                      Product
+                    </label>
+                    <div className="flex items-center space-x-2">
+                      <select
+                        id={`product-${item.tempId}`}
+                        value={item.productRef}
+                        onChange={(e) =>
+                          handleUpdateItem(index, "productRef", e.target.value)
+                        }
+                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 p-2 border"
+                        required
+                        disabled={isSubmitting}
+                      >
+                        <option value="">Select Product</option>
+                        {products.map((product) => (
+                          <option key={product.id} value={product.id}>
+                            {product.name}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => setShowAddProductModal(true)}
+                        className="mt-1 px-3 py-2 bg-blue-500 text-white text-sm font-medium rounded-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50"
+                        disabled={isSubmitting}
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor={`quantity-${item.tempId}`}
+                      className="block text-sm font-medium text-gray-700"
+                    >
+                      Quantity (KG)
+                    </label>
+                    <input
+                      type="number"
+                      id={`quantity-${item.tempId}`}
+                      value={item.quantity === 0 ? "" : item.quantity}
+                      onChange={(e) =>
+                        handleUpdateItem(index, "quantity", e.target.value)
+                      }
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 p-2 border"
+                      min="0"
+                      step="0.01"
+                      required
+                      disabled={isSubmitting}
+                    />
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor={`unitPrice-${item.tempId}`}
+                      className="block text-sm font-medium text-gray-700"
+                    >
+                      Unit Price (₹/KG)
+                    </label>
+                    <input
+                      type="number"
+                      id={`unitPrice-${item.tempId}`}
+                      value={item.unitPrice === 0 ? "" : item.unitPrice}
+                      onChange={(e) =>
+                        handleUpdateItem(index, "unitPrice", e.target.value)
+                      }
+                      className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 p-2 border"
+                      min="0"
+                      step="0.01"
+                      required
+                      disabled={isSubmitting}
+                    />
+                  </div>
+
+                  <div className="text-right">
+                    <label className="block text-sm font-medium text-gray-700">
+                      Total
+                    </label>
+                    <p className="mt-1 text-lg font-semibold text-gray-900">
+                      ₹{item.totalPrice.toFixed(2)}
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveItem(item.tempId)}
+                    className="absolute top-2 right-2 text-red-500 hover:text-red-700 font-bold"
+                    aria-label="Remove item"
+                    disabled={isSubmitting}
+                  >
+                    ×
                   </button>
                 </div>
-              </div>
-
-              <div>
-                <label
-                  htmlFor={`quantity-${item.tempId}`}
-                  className="block text-sm font-medium text-gray-700"
-                >
-                  Quantity (KG)
-                </label>
-                <input
-                  type="number"
-                  id={`quantity-${item.tempId}`}
-                  value={item.quantity === 0 ? "" : item.quantity}
-                  onChange={(e) =>
-                    handleUpdateItem(index, "quantity", e.target.value)
-                  }
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 p-2 border"
-                  min="0"
-                  step="0.01"
-                  required
-                  disabled={isSubmitting}
-                />
-              </div>
-
-              <div>
-                <label
-                  htmlFor={`unitPrice-${item.tempId}`}
-                  className="block text-sm font-medium text-gray-700"
-                >
-                  Unit Price (₹/KG)
-                </label>
-                <input
-                  type="number"
-                  id={`unitPrice-${item.tempId}`}
-                  value={item.unitPrice === 0 ? "" : item.unitPrice}
-                  onChange={(e) =>
-                    handleUpdateItem(index, "unitPrice", e.target.value)
-                  }
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 p-2 border"
-                  min="0"
-                  step="0.01"
-                  required
-                  disabled={isSubmitting}
-                />
-              </div>
-
-              <div className="text-right">
-                <label className="block text-sm font-medium text-gray-700">
-                  Total
-                </label>
-                <p className="mt-1 text-lg font-semibold text-gray-900">
-                  ₹{item.totalPrice.toFixed(2)}
-                </p>
-              </div>
+              ))}
 
               <button
                 type="button"
-                onClick={() => handleRemoveItem(item.tempId)}
-                className="absolute top-2 right-2 text-red-500 hover:text-red-700 font-bold"
-                aria-label="Remove item"
+                onClick={handleAddItem}
+                className="mt-4 bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50"
                 disabled={isSubmitting}
               >
-                ×
+                + Add Item
               </button>
-            </div>
-          ))}
 
-          <button
-            type="button"
-            onClick={handleAddItem}
-            className="mt-4 bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50"
-            disabled={isSubmitting}
-          >
-            + Add Item
-          </button>
-
-          {/* Totals Summary */}
-          <div className="mt-6 border-t pt-4">
-            <div className="flex justify-between items-center mb-2">
-              <span className="text-lg font-medium text-gray-700">
-                Sub Total:
-              </span>
-              <span className="text-lg font-semibold text-gray-900">
-                ₹{subTotal.toFixed(2)}
-              </span>
-            </div>
-            <div className="flex justify-between items-center mb-2">
-              <span className="text-lg font-medium text-gray-700">
-                Total Weight (Kg):
-              </span>
-              <span className="text-lg font-semibold text-gray-900">
-                {totalWeightInKg.toFixed(2)} Kg
-              </span>
-            </div>
-
-            {/* Commissions and Net Amounts Display */}
-            {systemSettings && (
-              <div className="mt-4 border-t pt-4">
-                <h3 className="text-lg font-semibold mb-2">Calculations</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
-                  <div className="flex justify-between">
-                    <span>
-                      Kisan Commission (
-                      {systemSettings.commissionKisanRate * 100}%):
-                    </span>
-                    <span className="font-medium">
-                      ₹{displayCommissionKisanAmount.toFixed(2)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>
-                      Vyapari Commission (₹
-                      {systemSettings.commissionVyapariRatePerKg.toFixed(2)}
-                      /Kg):
-                    </span>
-                    <span className="font-medium">
-                      ₹{displayCommissionVyapariAmount.toFixed(2)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between font-bold text-base mt-2 pt-2 border-t">
-                    <span>Total Commission:</span>
-                    <span>₹{displayTotalCommission.toFixed(2)}</span>
-                  </div>
+              {/* Totals Summary */}
+              <div className="mt-6 border-t pt-4">
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-lg font-medium text-gray-700">
+                    Sub Total:
+                  </span>
+                  <span className="text-lg font-semibold text-gray-900">
+                    ₹{subTotal.toFixed(2)}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-lg font-medium text-gray-700">
+                    Total Weight (Kg):
+                  </span>
+                  <span className="text-lg font-semibold text-gray-900">
+                    {totalWeightInKg.toFixed(2)} Kg
+                  </span>
                 </div>
 
-                <div className="mt-4 border-t pt-4">
-                  <div className="flex justify-between items-center mb-2 text-lg font-bold">
-                    <span>Net Amount to Kisan:</span>
-                    <span className="text-green-700">
-                      ₹{displayNetAmountKisan.toFixed(2)}
-                    </span>
+                {/* Commissions and Net Amounts Display */}
+                {systemSettings && (
+                  <div className="mt-4 border-t pt-4">
+                    <h3 className="text-lg font-semibold mb-2">Calculations</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+                      <div className="flex justify-between">
+                        <span>
+                          Kisan Commission (
+                          {systemSettings.commissionKisanRate * 100}%):
+                        </span>
+                        <span className="font-medium">
+                          ₹{displayCommissionKisanAmount.toFixed(2)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>
+                          Vyapari Commission (₹
+                          {systemSettings.commissionVyapariRatePerKg.toFixed(2)}
+                          /Kg):
+                        </span>
+                        <span className="font-medium">
+                          ₹{displayCommissionVyapariAmount.toFixed(2)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between font-bold text-base mt-2 pt-2 border-t">
+                        <span>Total Commission:</span>
+                        <span>₹{displayTotalCommission.toFixed(2)}</span>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 border-t pt-4">
+                      <div className="flex justify-between items-center mb-2 text-lg font-bold">
+                        <span>Net Amount to Kisan:</span>
+                        <span className="text-green-700">
+                          ₹{displayNetAmountKisan.toFixed(2)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center text-lg font-bold">
+                        <span>Net Amount from Vyapari:</span>
+                        <span className="text-blue-700">
+                          ₹{displayNetAmountVyapari.toFixed(2)}
+                        </span>
+                      </div>
+                    </div>
                   </div>
-                  <div className="flex justify-between items-center text-lg font-bold">
-                    <span>Net Amount from Vyapari:</span>
-                    <span className="text-blue-700">
-                      ₹{displayNetAmountVyapari.toFixed(2)}
-                    </span>
-                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Amount Paid and Bakaya Section */}
+            {(selectedKisanId || selectedVyapariId) && ( // Only show if at least one is selected
+              <div className="bg-white shadow-md rounded-lg p-6">
+                <h2 className="text-xl font-semibold mb-4 text-gray-700">
+                  Payment & Bakaya Information
+                </h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Kisan Payment */}
+                  {selectedKisanId && kisanBakaya !== null && (
+                    <div>
+                      <label
+                        htmlFor="amountPaidKisan"
+                        className="block text-sm font-medium text-gray-700"
+                      >
+                        Amount Paid to Kisan (₹)
+                        <span className="text-xs text-gray-500 ml-1">
+                          (Optional)
+                        </span>
+                      </label>
+                      <input
+                        type="number"
+                        id="amountPaidKisan"
+                        value={amountPaidKisan === 0 ? "" : amountPaidKisan}
+                        onChange={(e) =>
+                          setAmountPaidKisan(parseFloat(e.target.value) || 0)
+                        }
+                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 p-2 border"
+                        min="0"
+                        step="0.01"
+                        disabled={isSubmitting}
+                      />
+                      <p className="text-sm mt-1">
+                        New Kisan Bakaya:{" "}
+                        <span
+                          className={`font-semibold ${
+                            parseFloat(newKisanBakaya || "0") < 0
+                              ? "text-green-600"
+                              : "text-red-600"
+                          }`}
+                        >
+                          ₹{newKisanBakaya || "0.00"}{" "}
+                          {parseFloat(newKisanBakaya || "0") < 0
+                            ? "(Market will owe Kisan)"
+                            : "(Kisan will owe Market)"}
+                        </span>
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Vyapari Payment */}
+                  {selectedVyapariId && vyapariBakaya !== null && (
+                    <div>
+                      <label
+                        htmlFor="amountPaidVyapari"
+                        className="block text-sm font-medium text-gray-700"
+                      >
+                        Amount Collected from Vyapari (₹)
+                        <span className="text-xs text-gray-500 ml-1">
+                          (Optional)
+                        </span>
+                      </label>
+                      <input
+                        type="number"
+                        id="amountPaidVyapari"
+                        value={amountPaidVyapari === 0 ? "" : amountPaidVyapari}
+                        onChange={(e) =>
+                          setAmountPaidVyapari(parseFloat(e.target.value) || 0)
+                        }
+                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 p-2 border"
+                        min="0"
+                        step="0.01"
+                        disabled={isSubmitting}
+                      />
+                      <p className="text-sm mt-1">
+                        New Vyapari Bakaya:{" "}
+                        <span
+                          className={`font-semibold ${
+                            parseFloat(newVyapariBakaya || "0") < 0
+                              ? "text-green-600"
+                              : "text-red-600"
+                          }`}
+                        >
+                          ₹{newVyapariBakaya || "0.00"}{" "}
+                          {parseFloat(newVyapariBakaya || "0") < 0
+                            ? "(Market will owe Vyapari)"
+                            : "(Vyapari will owe Market)"}
+                        </span>
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
-          </div>
-        </div>
 
-        {/* Amount Paid and Bakaya Section */}
-        {(selectedKisanId || selectedVyapariId) && ( // Only show if at least one is selected
-          <div className="bg-white shadow-md rounded-lg p-6">
-            <h2 className="text-xl font-semibold mb-4 text-gray-700">
-              Payment & Bakaya Information
-            </h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Kisan Payment */}
-              {selectedKisanId && kisanBakaya !== null && (
-                <div>
-                  <label
-                    htmlFor="amountPaidKisan"
-                    className="block text-sm font-medium text-gray-700"
-                  >
-                    Amount Paid to Kisan (₹)
-                    <span className="text-xs text-gray-500 ml-1">
-                      (Optional)
-                    </span>
-                  </label>
-                  <input
-                    type="number"
-                    id="amountPaidKisan"
-                    value={amountPaidKisan === 0 ? "" : amountPaidKisan}
-                    onChange={(e) =>
-                      setAmountPaidKisan(parseFloat(e.target.value) || 0)
-                    }
-                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 p-2 border"
-                    min="0"
-                    step="0.01"
-                    disabled={isSubmitting}
-                  />
-                  <p className="text-sm mt-1">
-                    New Kisan Bakaya:{" "}
-                    <span
-                      className={`font-semibold ${
-                        parseFloat(newKisanBakaya || "0") < 0
-                          ? "text-green-600"
-                          : "text-red-600"
-                      }`}
-                    >
-                      ₹{newKisanBakaya || "0.00"}{" "}
-                      {parseFloat(newKisanBakaya || "0") < 0
-                        ? "(Market will owe Kisan)"
-                        : "(Kisan will owe Market)"}
-                    </span>
-                  </p>
-                </div>
-              )}
-
-              {/* Vyapari Payment */}
-              {selectedVyapariId && vyapariBakaya !== null && (
-                <div>
-                  <label
-                    htmlFor="amountPaidVyapari"
-                    className="block text-sm font-medium text-gray-700"
-                  >
-                    Amount Collected from Vyapari (₹)
-                    <span className="text-xs text-gray-500 ml-1">
-                      (Optional)
-                    </span>
-                  </label>
-                  <input
-                    type="number"
-                    id="amountPaidVyapari"
-                    value={amountPaidVyapari === 0 ? "" : amountPaidVyapari}
-                    onChange={(e) =>
-                      setAmountPaidVyapari(parseFloat(e.target.value) || 0)
-                    }
-                    className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 p-2 border"
-                    min="0"
-                    step="0.01"
-                    disabled={isSubmitting}
-                  />
-                  <p className="text-sm mt-1">
-                    New Vyapari Bakaya:{" "}
-                    <span
-                      className={`font-semibold ${
-                        parseFloat(newVyapariBakaya || "0") < 0
-                          ? "text-green-600"
-                          : "text-red-600"
-                      }`}
-                    >
-                      ₹{newVyapariBakaya || "0.00"}{" "}
-                      {parseFloat(newVyapariBakaya || "0") < 0
-                        ? "(Market will owe Vyapari)"
-                        : "(Vyapari will owe Market)"}
-                    </span>
-                  </p>
-                </div>
-              )}
+            {/* Notes Section */}
+            <div className="bg-white shadow-md rounded-lg p-6">
+              <label
+                htmlFor="notes"
+                className="block text-sm font-medium text-gray-700"
+              >
+                Notes (Optional)
+              </label>
+              <textarea
+                id="notes"
+                rows={3}
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 p-2 border"
+                placeholder="Any additional notes for this transaction..."
+                disabled={isSubmitting}
+              ></textarea>
             </div>
-          </div>
-        )}
 
-        {/* Notes Section */}
-        <div className="bg-white shadow-md rounded-lg p-6">
-          <label
-            htmlFor="notes"
-            className="block text-sm font-medium text-gray-700"
+            {/* Submit Button */}
+            <div className="mt-8">
+              <button
+                type="submit"
+                className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:opacity-50"
+                disabled={
+                  !selectedKisanId ||
+                  !selectedVyapariId ||
+                  transactionItems.length === 0 ||
+                  transactionItems.some(
+                    (item) =>
+                      !item.productRef ||
+                      item.quantity <= 0 ||
+                      item.unitPrice <= 0
+                  ) ||
+                  !isDataReady || // Ensure settings are loaded
+                  isSubmitting
+                }
+              >
+                {isSubmitting
+                  ? "Recording & Updating Balances..."
+                  : "Record Transaction & Update Balances"}
+              </button>
+            </div>
+          </form>
+
+          {/* Quick Add Modals (remain unchanged) */}
+          <Modal
+            isOpen={showAddKisanModal}
+            onClose={handleCancelAddKisan}
+            title="Add New Kisan"
           >
-            Notes (Optional)
-          </label>
-          <textarea
-            id="notes"
-            rows={3}
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50 p-2 border"
-            placeholder="Any additional notes for this transaction..."
-            disabled={isSubmitting}
-          ></textarea>
-        </div>
+            <AddKisanQuickForm
+              onSuccess={handleKisanAdded}
+              onCancel={handleCancelAddKisan}
+            />
+          </Modal>
 
-        {/* Submit Button */}
-        <div className="mt-8">
-          <button
-            type="submit"
-            className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:opacity-50"
-            disabled={
-              !selectedKisanId ||
-              !selectedVyapariId ||
-              transactionItems.length === 0 ||
-              transactionItems.some(
-                (item) =>
-                  !item.productRef || item.quantity <= 0 || item.unitPrice <= 0
-              ) ||
-              !isDataReady || // Ensure settings are loaded
-              isSubmitting
-            }
+          <Modal
+            isOpen={showAddVyapariModal}
+            onClose={handleCancelAddVyapari}
+            title="Add New Vyapari"
           >
-            {isSubmitting
-              ? "Recording & Updating Balances..."
-              : "Record Transaction & Update Balances"}
-          </button>
+            <AddVyapariQuickForm
+              onSuccess={handleVyapariAdded}
+              onCancel={handleCancelAddVyapari}
+            />
+          </Modal>
+
+          <Modal
+            isOpen={showAddProductModal}
+            onClose={handleCancelAddProduct}
+            title="Add New Product"
+          >
+            <AddProductQuickForm
+              onSuccess={handleProductAdded}
+              onCancel={handleCancelAddProduct}
+            />
+          </Modal>
         </div>
-      </form>
-
-      {/* Quick Add Modals (remain unchanged) */}
-      <Modal
-        isOpen={showAddKisanModal}
-        onClose={handleCancelAddKisan}
-        title="Add New Kisan"
-      >
-        <AddKisanQuickForm
-          onSuccess={handleKisanAdded}
-          onCancel={handleCancelAddKisan}
-        />
-      </Modal>
-
-      <Modal
-        isOpen={showAddVyapariModal}
-        onClose={handleCancelAddVyapari}
-        title="Add New Vyapari"
-      >
-        <AddVyapariQuickForm
-          onSuccess={handleVyapariAdded}
-          onCancel={handleCancelAddVyapari}
-        />
-      </Modal>
-
-      <Modal
-        isOpen={showAddProductModal}
-        onClose={handleCancelAddProduct}
-        title="Add New Product"
-      >
-        <AddProductQuickForm
-          onSuccess={handleProductAdded}
-          onCancel={handleCancelAddProduct}
-        />
-      </Modal>
-    </div>
-  );
-}
+      );
+    }
